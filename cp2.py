@@ -29,7 +29,7 @@ def main():
             time += dt
 
             q = tvdrk3(nx, ny, nz, dx, dy, dz, dt, q)
-            print(f"  * time: {time:.4f} s", end="\r")
+            print(f"  * time: {time:.4f} s", end="\n")
 
         print("\n  * Done")
         results.append({
@@ -69,13 +69,27 @@ def tvdrk3(nx, ny, nz, dx, dy, dz, dt, q_n):
         q_n[3:(nx+2), 3:(ny+2), 3:(nz+2), :] +
         dt*rhs(nx, ny, nz, dx, dy, dz, q_n)
     )
+    print("---")
+    print(f"avg(q1[0]) = {np.average(q1[:, :, :, 0])}")
+    print(f"avg(q1[1]) = {np.average(q1[:, :, :, 1])}")
+    print(f"avg(q1[2]) = {np.average(q1[:, :, :, 2])}")
+    print(f"avg(q1[3]) = {np.average(q1[:, :, :, 3])}")
+    print(f"avg(q1[4]) = {np.average(q1[:, :, :, 4])}")
+    print("---")
 
+    # import pudb; pudb.set_trace()
     q2 = np.copy(q_n)
     q2[3:(nx+2), 3:(ny+2), 3:(nz+2), :] = (
         0.75*q_n[3:(nx+2), 3:(ny+2), 3:(nz+2), :] +
         0.25*q1[3:(nx+2), 3:(ny+2), 3:(nz+2), :] +
         0.25*dt*rhs(nx, ny, nz, dx, dy, dz, q1)
     )
+    print(f"avg(q2[0]) = {np.average(q2[:, :, :, 0])}")
+    print(f"avg(q2[1]) = {np.average(q2[:, :, :, 1])}")
+    print(f"avg(q2[2]) = {np.average(q2[:, :, :, 2])}")
+    print(f"avg(q2[3]) = {np.average(q2[:, :, :, 3])}")
+    print(f"avg(q2[4]) = {np.average(q2[:, :, :, 4])}")
+    print("---")
 
     q_np1 = np.copy(q_n)
     q_np1[3:(nx+2), 3:(ny+2), 3:(nz+2), :] = (
@@ -83,6 +97,12 @@ def tvdrk3(nx, ny, nz, dx, dy, dz, dt, q_n):
         (2/3)*q2[3:(nx+2), 3:(ny+2), 3:(nz+2), :] +
         (2/3)*dt*rhs(nx, ny, nz, dx, dy, dz, q2)
     )
+    print(f"avg(q_np1[0]) = {np.average(q_np1[:, :, :, 0])}")
+    print(f"avg(q_np1[1]) = {np.average(q_np1[:, :, :, 1])}")
+    print(f"avg(q_np1[2]) = {np.average(q_np1[:, :, :, 2])}")
+    print(f"avg(q_np1[3]) = {np.average(q_np1[:, :, :, 3])}")
+    print(f"avg(q_np1[4]) = {np.average(q_np1[:, :, :, 4])}")
+    print("---")
 
     return q_np1
 
@@ -223,7 +243,7 @@ def weno_5(q, axis=0):
     d2 = 3/10
 
     # Nonliear weights
-    eps = 1e-20
+    eps = 1e-6
     i_ = np.arange(n-5)
     a0 = d0 / (b0[i_] + eps)**2
     a1 = d1 / (b1[i_] + eps)**2
@@ -418,15 +438,15 @@ def get_wave_speeds(q, nx, ny, nz):
     jj = np.arange(2, ny+2)
     kk = np.arange(2, nz+2)
 
-    c_ip12 = abs(np.stack([
-        u[ii-2, 2:(ny+2), 2:(nz+2)],
-        (u[ii-2, 2:(ny+2), 2:(nz+2)]-a[ii-2, 2:(ny+2), 2:(nz+2)]),
-        (u[ii-2, 2:(ny+2), 2:(nz+2)]+a[ii-2, 2:(ny+2), 2:(nz+2)]),
-        # --
-        u[ii-1, 2:(ny+2), 2:(nz+2)],
-        (u[ii-1, 2:(ny+2), 2:(nz+2)]-a[ii-1, 2:(ny+2), 2:(nz+2)]),
-        (u[ii-1, 2:(ny+2), 2:(nz+2)]+a[ii-1, 2:(ny+2), 2:(nz+2)]),
-        # --
+    c_ip12 = np.nanmax(abs(np.stack([
+        # u[ii-2, 2:(ny+2), 2:(nz+2)],
+        # (u[ii-2, 2:(ny+2), 2:(nz+2)]-a[ii-2, 2:(ny+2), 2:(nz+2)]),
+        # (u[ii-2, 2:(ny+2), 2:(nz+2)]+a[ii-2, 2:(ny+2), 2:(nz+2)]),
+        # # --
+        # u[ii-1, 2:(ny+2), 2:(nz+2)],
+        # (u[ii-1, 2:(ny+2), 2:(nz+2)]-a[ii-1, 2:(ny+2), 2:(nz+2)]),
+        # (u[ii-1, 2:(ny+2), 2:(nz+2)]+a[ii-1, 2:(ny+2), 2:(nz+2)]),
+        # # --
         u[ii, 2:(ny+2), 2:(nz+2)],
         (u[ii, 2:(ny+2), 2:(nz+2)]-a[ii, 2:(ny+2), 2:(nz+2)]),
         (u[ii, 2:(ny+2), 2:(nz+2)]+a[ii, 2:(ny+2), 2:(nz+2)]),
@@ -434,25 +454,25 @@ def get_wave_speeds(q, nx, ny, nz):
         u[ii+1, 2:(ny+2), 2:(nz+2)],
         (u[ii+1, 2:(ny+2), 2:(nz+2)]-a[ii+1, 2:(ny+2), 2:(nz+2)]),
         (u[ii+1, 2:(ny+2), 2:(nz+2)]+a[ii+1, 2:(ny+2), 2:(nz+2)]),
-        # --
-        u[ii+2, 2:(ny+2), 2:(nz+2)],
-        (u[ii+2, 2:(ny+2), 2:(nz+2)]-a[ii+2, 2:(ny+2), 2:(nz+2)]),
-        (u[ii+2, 2:(ny+2), 2:(nz+2)]+a[ii+2, 2:(ny+2), 2:(nz+2)]),
-        # --
-        u[ii+3, 2:(ny+2), 2:(nz+2)],
-        (u[ii+3, 2:(ny+2), 2:(nz+2)]-a[ii+3, 2:(ny+2), 2:(nz+2)]),
-        (u[ii+3, 2:(ny+2), 2:(nz+2)]+a[ii+3, 2:(ny+2), 2:(nz+2)]),
-    ], axis=0)).max(axis=0)
+        # # --
+        # u[ii+2, 2:(ny+2), 2:(nz+2)],
+        # (u[ii+2, 2:(ny+2), 2:(nz+2)]-a[ii+2, 2:(ny+2), 2:(nz+2)]),
+        # (u[ii+2, 2:(ny+2), 2:(nz+2)]+a[ii+2, 2:(ny+2), 2:(nz+2)]),
+        # # --
+        # u[ii+3, 2:(ny+2), 2:(nz+2)],
+        # (u[ii+3, 2:(ny+2), 2:(nz+2)]-a[ii+3, 2:(ny+2), 2:(nz+2)]),
+        # (u[ii+3, 2:(ny+2), 2:(nz+2)]+a[ii+3, 2:(ny+2), 2:(nz+2)]),
+    ], axis=0)), axis=0)
 
-    c_jp12 = abs(np.stack([
-        u[2:(nx+2), jj-2, 2:(nz+2)],
-        (u[2:(nx+2), jj-2, 2:(nz+2)]-a[2:(nx+2), jj-2, 2:(nz+2)]),
-        (u[2:(nx+2), jj-2, 2:(nz+2)]+a[2:(nx+2), jj-2, 2:(nz+2)]),
-        # --
-        u[2:(nx+2), jj-1, 2:(nz+2)],
-        (u[2:(nx+2), jj-1, 2:(nz+2)]-a[2:(nx+2), jj-1, 2:(nz+2)]),
-        (u[2:(nx+2), jj-1, 2:(nz+2)]+a[2:(nx+2), jj-1, 2:(nz+2)]),
-        # --
+    c_jp12 = np.nanmax(abs(np.stack([
+        # u[2:(nx+2), jj-2, 2:(nz+2)],
+        # (u[2:(nx+2), jj-2, 2:(nz+2)]-a[2:(nx+2), jj-2, 2:(nz+2)]),
+        # (u[2:(nx+2), jj-2, 2:(nz+2)]+a[2:(nx+2), jj-2, 2:(nz+2)]),
+        # # --
+        # u[2:(nx+2), jj-1, 2:(nz+2)],
+        # (u[2:(nx+2), jj-1, 2:(nz+2)]-a[2:(nx+2), jj-1, 2:(nz+2)]),
+        # (u[2:(nx+2), jj-1, 2:(nz+2)]+a[2:(nx+2), jj-1, 2:(nz+2)]),
+        # # --
         u[2:(nx+2), jj, 2:(nz+2)],
         (u[2:(nx+2), jj, 2:(nz+2)]-a[2:(nx+2), jj, 2:(nz+2)]),
         (u[2:(nx+2), jj, 2:(nz+2)]+a[2:(nx+2), jj, 2:(nz+2)]),
@@ -460,25 +480,25 @@ def get_wave_speeds(q, nx, ny, nz):
         u[2:(nx+2), jj+1, 2:(nz+2)],
         (u[2:(nx+2), jj+1, 2:(nz+2)]-a[2:(nx+2), jj+1, 2:(nz+2)]),
         (u[2:(nx+2), jj+1, 2:(nz+2)]+a[2:(nx+2), jj+1, 2:(nz+2)]),
-        # --
-        u[2:(nx+2), jj+2, 2:(nz+2)],
-        (u[2:(nx+2), jj+2, 2:(nz+2)]-a[2:(nx+2), jj+2, 2:(nz+2)]),
-        (u[2:(nx+2), jj+2, 2:(nz+2)]+a[2:(nx+2), jj+2, 2:(nz+2)]),
-        # --
-        u[2:(nx+2), jj+3, 2:(nz+2)],
-        (u[2:(nx+2), jj+3, 2:(nz+2)]-a[2:(nx+2), jj+3, 2:(nz+2)]),
-        (u[2:(nx+2), jj+3, 2:(nz+2)]+a[2:(nx+2), jj+3, 2:(nz+2)]),
-    ], axis=0)).max(axis=0)
+        # # --
+        # u[2:(nx+2), jj+2, 2:(nz+2)],
+        # (u[2:(nx+2), jj+2, 2:(nz+2)]-a[2:(nx+2), jj+2, 2:(nz+2)]),
+        # (u[2:(nx+2), jj+2, 2:(nz+2)]+a[2:(nx+2), jj+2, 2:(nz+2)]),
+        # # --
+        # u[2:(nx+2), jj+3, 2:(nz+2)],
+        # (u[2:(nx+2), jj+3, 2:(nz+2)]-a[2:(nx+2), jj+3, 2:(nz+2)]),
+        # (u[2:(nx+2), jj+3, 2:(nz+2)]+a[2:(nx+2), jj+3, 2:(nz+2)]),
+    ], axis=0)), axis=0)
 
-    c_kp12 = abs(np.stack([
-        u[2:(nx+2), 2:(ny+2), kk-2],
-        (u[2:(nx+2), 2:(ny+2), kk-2]-a[2:(nx+2), 2:(ny+2), kk-2]),
-        (u[2:(nx+2), 2:(ny+2), kk-2]+a[2:(nx+2), 2:(ny+2), kk-2]),
-        # --
-        u[2:(nx+2), 2:(ny+2), kk-1],
-        (u[2:(nx+2), 2:(ny+2), kk-1]-a[2:(nx+2), 2:(ny+2), kk-1]),
-        (u[2:(nx+2), 2:(ny+2), kk-1]+a[2:(nx+2), 2:(ny+2), kk-1]),
-        # --
+    c_kp12 = np.nanmax(abs(np.stack([
+        # u[2:(nx+2), 2:(ny+2), kk-2],
+        # (u[2:(nx+2), 2:(ny+2), kk-2]-a[2:(nx+2), 2:(ny+2), kk-2]),
+        # (u[2:(nx+2), 2:(ny+2), kk-2]+a[2:(nx+2), 2:(ny+2), kk-2]),
+        # # --
+        # u[2:(nx+2), 2:(ny+2), kk-1],
+        # (u[2:(nx+2), 2:(ny+2), kk-1]-a[2:(nx+2), 2:(ny+2), kk-1]),
+        # (u[2:(nx+2), 2:(ny+2), kk-1]+a[2:(nx+2), 2:(ny+2), kk-1]),
+        # # --
         u[2:(nx+2), 2:(ny+2), kk],
         (u[2:(nx+2), 2:(ny+2), kk]-a[2:(nx+2), 2:(ny+2), kk]),
         (u[2:(nx+2), 2:(ny+2), kk]+a[2:(nx+2), 2:(ny+2), kk]),
@@ -486,15 +506,15 @@ def get_wave_speeds(q, nx, ny, nz):
         u[2:(nx+2), 2:(ny+2), kk+1],
         (u[2:(nx+2), 2:(ny+2), kk+1]-a[2:(nx+2), 2:(ny+2), kk+1]),
         (u[2:(nx+2), 2:(ny+2), kk+1]+a[2:(nx+2), 2:(ny+2), kk+1]),
-        # --
-        u[2:(nx+2), 2:(ny+2), kk+2],
-        (u[2:(nx+2), 2:(ny+2), kk+2]-a[2:(nx+2), 2:(ny+2), kk+2]),
-        (u[2:(nx+2), 2:(ny+2), kk+2]+a[2:(nx+2), 2:(ny+2), kk+2]),
-        # --
-        u[2:(nx+2), 2:(ny+2), kk+3],
-        (u[2:(nx+2), 2:(ny+2), kk+3]-a[2:(nx+2), 2:(ny+2), kk+3]),
-        (u[2:(nx+2), 2:(ny+2), kk+3]+a[2:(nx+2), 2:(ny+2), kk+3]),
-    ], axis=0)).max(axis=0)
+        # # --
+        # u[2:(nx+2), 2:(ny+2), kk+2],
+        # (u[2:(nx+2), 2:(ny+2), kk+2]-a[2:(nx+2), 2:(ny+2), kk+2]),
+        # (u[2:(nx+2), 2:(ny+2), kk+2]+a[2:(nx+2), 2:(ny+2), kk+2]),
+        # # --
+        # u[2:(nx+2), 2:(ny+2), kk+3],
+        # (u[2:(nx+2), 2:(ny+2), kk+3]-a[2:(nx+2), 2:(ny+2), kk+3]),
+        # (u[2:(nx+2), 2:(ny+2), kk+3]+a[2:(nx+2), 2:(ny+2), kk+3]),
+    ], axis=0)), axis=0)
 
     return c_ip12, c_jp12, c_kp12
 
@@ -550,6 +570,7 @@ def get_viscous_fluxes(q, nx, ny, nz, dx, dy, dz):
     """
     Re, Pr, Ma, gamma = constants()
 
+    # Maybe replace zeros in rho with 1e-6?
     rho = q[:, :, :, 0]
     u = q[:, :, :, 1] / rho
     v = q[:, :, :, 2] / rho
@@ -595,15 +616,17 @@ def get_viscous_fluxes(q, nx, ny, nz, dx, dy, dz):
 
     t_xy = (mu/Re) * (
         (u[1:-1, jj+1, 1:-1] - u[1:-1, jj-1, 1:-1]) / (2*dy) +
-        (v[ii+1, 1:-1, 1:-1] - v[ii-1, 1:-1, 1:-1]) / (2*dx) - duk_dxk_term
+        (v[ii+1, 1:-1, 1:-1] - v[ii-1, 1:-1, 1:-1]) / (2*dx)  # - duk_dxk_term
+        #                                                       ^^^^^^^^^^^^^^
+        #                          Kronecker delta cancels this because i != j
     )
     t_xz = (mu/Re) * (
         (u[1:-1, 1:-1, kk+1] - u[1:-1, 1:-1, kk-1]) / (2*dz) +
-        (w[ii+1, 1:-1, 1:-1] - w[ii-1, 1:-1, 1:-1]) / (2*dx) - duk_dxk_term
+        (w[ii+1, 1:-1, 1:-1] - w[ii-1, 1:-1, 1:-1]) / (2*dx)  # - duk_dxk_term
     )
     t_yz = (mu/Re) * (
         (v[1:-1, 1:-1, kk+1] - v[1:-1, 1:-1, kk-1]) / (2*dz) +
-        (w[1:-1, jj+1, 1:-1] - w[1:-1, jj-1, 1:-1]) / (2*dy) - duk_dxk_term
+        (w[1:-1, jj+1, 1:-1] - w[1:-1, jj-1, 1:-1]) / (2*dy)  # - duk_dxk_term
     )
 
     # Heat fluxes, using 1st order central derivative
