@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from numba import jit
 import numpy as np
 from pathlib import Path
+import random
 
 
 def main(cases=[{"recon_scheme": "WENO-5", "limiter": None, "nx": 2000}]):
@@ -30,32 +31,16 @@ def main(cases=[{"recon_scheme": "WENO-5", "limiter": None, "nx": 2000}]):
     plot_results(results)
 
 
-def plot_results(results):
-    plt.clf()
-    for r in results:
-        y = r["q"]
-        l_ = "" if r["limiter"] is None else f", {r['limiter']}"
-        label = f"{r['recon_scheme']}{l_}, nx={r['nx']}"
-
-        plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
-                 linewidth=0.4, label=label)
-
-    plt.legend()
-    plt.ylabel("u")
-    plt.xlabel("x")
-    plt.suptitle(f"Solutions to Burgers Problem at t={r['t']:.4f}s")
-    Path("output").mkdir(exist_ok=True)
-    plt.savefig("output/Results_u.png", dpi=400)
-
-
 def outer_loop(reconstruction_scheme, limiter, nx):
-    lx = 1
+    lx = 2*np.pi
     dx = lx/nx
     q = get_IC_q(nx, dx)
     tmax = 0.1  # s
     time = 0
 
     print(f"nx = {nx}")
+    E_hist = []   # Average kinetic energy
+    Et_hist = []  # Dissipation rate of kinetic energy
     while time < tmax:
         dt = get_dt(q, nx, dx)
 
@@ -64,8 +49,17 @@ def outer_loop(reconstruction_scheme, limiter, nx):
               if time+dt < tmax
               else tmax - time)
         time += dt
+        E_k0 = get_KE_k_space(q, nx)
+        E0 = get_total_KE(E_k0)
 
         q = tvdrk3(nx, dx, dt, q, reconstruction_scheme, limiter)
+
+        E_k = get_KE_k_space(q, nx)
+        E = get_total_KE(E_k)
+        Et = -(E-E0)/dt
+        E_hist.append({"E": E, "E_k": E_k, "t": time, "dt": dt})
+        Et_hist.append({"Et": Et, "t": time, "dt": dt})
+
         print(f"  * time: {time:.4f} s", end="\r")
 
     print("\n  * Done")
@@ -74,12 +68,50 @@ def outer_loop(reconstruction_scheme, limiter, nx):
         "lx": lx,
         "nx": nx,
         "q": q[2:nx+2],
+        "E_hist": E_hist,
+        "Et_hist": Et_hist,
         "t": time,
         "recon_scheme": reconstruction_scheme,
         "limiter": limiter
     }
 
     return result
+
+
+def get_KE_k_space(q, nx):
+    # Get average kinetic energy of the domain (0:nx)
+    # E = (1/nx) * 0.5*np.sum(u**2)
+
+    u = q[2:(nx+2), 0]
+    u_k = np.fft.fft(u, norm="forward")
+
+    Es = 0.5*np.abs(u_k)**2  # Energy spectrum
+    i = np.arange(1, int(nx/2)-1)
+    E_k = 0.5*(Es[i] + Es[nx-i])
+
+    return E_k
+
+
+def get_total_KE(E_k):
+    # E_k goes from 0 < k < km
+    # and the domain is -km < k < km
+    # --> Multiply by 2 to get energy over symmetric domain
+    EE = 2*np.sum(E_k)
+
+    return EE
+
+
+def get_total_KE_dissipation_rate(E_k, nu):
+    # E_k goes from 0 < k < km
+    # and the domain is -km < k < km
+    # --> Multiply by 2 to get energy over symmetric domain
+    # Also, E_k = 0.5*u_k**2, but D = nu * k**2 * u_k**2
+    # --> Multiply by 2 again to get E_k -> u_k**2
+    # (Multiply by 4 in total)
+    ksq = np.arange(1, len(E_k)+1)**2
+    DD = 4*nu*np.sum(ksq*E_k)
+
+    return DD
 
 
 def tvdrk3(nx, dx, dt, q_n, reconstruction_scheme, limiter):
@@ -480,7 +512,31 @@ def TDMAsolver(a, b, c, d):
 # ==========================================
 def get_IC_q(nx, dx):
     q = np.zeros((nx+5, 1))
-    q[(int(0.5/dx)+2):(int(0.6/dx)+2), :] = 1
+
+    # Shock from 0.5 <= x < 0.6
+    # q[(int(0.5/dx)+2):(int(0.6/dx)+2), :] = 1
+
+    # Wave numbers
+    lx = nx*dx
+    kx = np.zeros(nx+5)
+    i = np.arange(int(nx/2))
+    kx[2:(int(nx/2)+2)] = 2*np.pi*i / lx
+    kx[(int(nx/2)+2):(nx+2)] = 2*np.pi*(i - int(nx/2)) / lx
+
+    k0 = 10
+    A = (2/(3*np.sqrt(np.pi))) * k0**-5
+    E_k = A*kx**4 * np.exp(-(kx/k0)**2)
+
+    # Velocity in Fourier space
+    u_k = np.sqrt(2*E_k) * np.exp(2j*np.pi*random.uniform(0, 1))
+
+    # Velocity in physical space
+    u = np.real(np.fft.ifft(u_k, norm="forward"))
+
+    # Periodicity
+    u[nx+2] = u[2]
+
+    q[2:(nx+2), 0] = u[2:(nx+2)]
 
     return q
 
@@ -510,17 +566,77 @@ def get_flux(q):
     return F
 
 
+# ==========================================
+# ================ Plotting ================
+# ==========================================
+def plot_results(results):
+    plt.clf()
+    for r in results:
+        y = r["q"]
+        l_ = "" if r["limiter"] is None else f", {r['limiter']}"
+        label = f"{r['recon_scheme']}{l_}, nx={r['nx']}"
+
+        plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
+                 linewidth=0.4, label=label)
+
+    plt.legend()
+    plt.ylabel("u")
+    plt.xlabel("x")
+    plt.suptitle(f"Solutions to Burgers Problem at t={r['t']:.4f}s")
+    Path("output").mkdir(exist_ok=True)
+    plt.savefig("output/Results_u.png", dpi=400)
+
+    plot_E_hist(results)
+
+
+def plot_E_hist(results):
+    # E_hist.append({"E": E, "E_k": E_k, "t": time, "dt": dt})
+    # Et_hist.append({"Et": Et, "t": time, "dt": dt})
+    for E_hist_key, E_key in zip(["E_hist", "Et_hist"], ["E", "Et"]):
+        plt.clf()
+        for r in results:
+            E = [_[E_key] for _ in r[E_hist_key] if not np.isnan(_[E_key])]
+            t = [_["t"] for _ in r[E_hist_key] if not np.isnan(_["t"])]
+            if len(t) > len(E):
+                t = t[:len(E)]
+            elif len(E) > len(t):
+                E = E[:len(t)]
+
+            l_ = "" if r["limiter"] is None else f", {r['limiter']}"
+            label = f"{r['recon_scheme']}{l_}, nx={r['nx']}"
+
+            plt.plot(t, E, linewidth=0.5, label=label)
+
+        plt.legend()
+        plt.ylabel(E_key)
+        plt.xlabel("t")
+        # plt.yscale("log")
+        # plt.xscale("log")
+        E_var = ("Kinetic Energy"
+                 if E_key == "E"
+                 else "Kinetic Energy Dissipation Rate")
+        plt.suptitle(f"{E_var} vs. Time for Burgers Problem")
+        Path("output").mkdir(exist_ok=True)
+        plt.savefig(f"output/Results_{E_key}_vs_t.png")
+
+
 if __name__ == "__main__":
+    main(cases=[
+        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**9},  # 512
+        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**10},
+        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**11},
+        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**12},
+    ])
     # main(cases=[
     #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
     #     {"recon_scheme": "WENO-3", "limiter": None, "nx": 100},
     #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 100},
     # ])
-    main(cases=[
-        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
-        {"recon_scheme": "MUSCL", "limiter": "Van Leer", "nx": 100},
-        {"recon_scheme": "MUSCL", "limiter": "Van Albada", "nx": 100},
-        {"recon_scheme": "MUSCL", "limiter": "Min-Mod", "nx": 100},
-        {"recon_scheme": "MUSCL", "limiter": "Superbee", "nx": 100},
-        {"recon_scheme": "MUSCL", "limiter": "Monotonized Central", "nx": 100},
-    ])
+    # main(cases=[
+    #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
+    #     {"recon_scheme": "MUSCL", "limiter": "Van Leer", "nx": 100},
+    #     {"recon_scheme": "MUSCL", "limiter": "Van Albada", "nx": 100},
+    #     {"recon_scheme": "MUSCL", "limiter": "Min-Mod", "nx": 100},
+    #     {"recon_scheme": "MUSCL", "limiter": "Superbee", "nx": 100},
+    #     {"recon_scheme": "MUSCL", "limiter": "Monotonized Central", "nx": 100},
+    # ])
