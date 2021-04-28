@@ -5,6 +5,7 @@
 # [2] Maulik et. al. 2018 Adaptive. https://doi.org/10.1002/fld.4489
 # [3] Jiang et. al. 1999. https://doi.org/10.1006/jcph.1999.6207
 #
+import json
 import matplotlib.pyplot as plt
 from numba import jit
 import numpy as np
@@ -12,33 +13,53 @@ from pathlib import Path
 import random
 
 
-def main(cases=[{"recon_scheme": "WENO-5", "limiter": None, "nx": 2000}]):
+def main(cases=[
+    {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000, "ns": 4,
+     "nu": 5e-4, "tmax": 0.05}
+], export_as_DNS=False):
+
+    if export_as_DNS:
+        assert len(cases) == 1
+        assert not Path("DNS").exists()
+    elif not Path("DNS").exists():
+        print("WARNING: No 'DNS' directory exists. Proceeding without "
+              "DNS results to compare with.")
 
     results = []
     for case in cases:
-        recon_scheme = case["recon_scheme"]
-        limiter = case["limiter"]
-        nx = case["nx"]
+        recon_scheme = case["recon_scheme"]  # Reconstruction Scheme
+        limiter = case["limiter"]  # Limiter for MUSCL scheme
+        nx = case["nx"]  # Number of cells in x direction
+        ns = case["ns"]  # Number of samples
+        nu = case["nu"]  # Viscosity
+        tmax = case["tmax"]
 
-        l_ = "" if limiter is None else f", {limiter} Limiter"
+        l_ = "\n" if limiter is None else f", {limiter} Limiter\n"
         title = (f"\nSolving Burgers Problem Using {recon_scheme} "
-                 f"Reconstruction{l_}, nx={nx}")
+                 f"Reconstruction{l_}nx={nx}, ns={ns}, nu={nu:.1e}"
+                 f", tmax={tmax:.2f}")
         print(title + "\n" + "="*len(title))
 
-        result = outer_loop(recon_scheme, limiter, nx)
+        result = outer_loop(recon_scheme, limiter, nx, ns, nu, tmax)
         results.append(result)
 
-    plot_results(results)
+    if export_as_DNS:
+        export_DNS_results(results[0])
+    else:
+        if Path("DNS").exists():
+            DNS_results = load_DNS_results()
+            results.insert(0, DNS_results)
+
+        plot_results(results)
 
 
-def outer_loop(reconstruction_scheme, limiter, nx):
+def outer_loop(reconstruction_scheme, limiter, nx, ns, nu, tmax):
     lx = 2*np.pi
     dx = lx/nx
-    q = get_IC_q(nx, dx)
-    tmax = 0.1  # s
+    q = get_IC_q(nx, dx, ns)
     time = 0
 
-    print(f"nx = {nx}")
+    q_hist = [q]
     E_hist = []   # Average kinetic energy
     Et_hist = []  # Dissipation rate of kinetic energy
     while time < tmax:
@@ -52,13 +73,15 @@ def outer_loop(reconstruction_scheme, limiter, nx):
         E_k0 = get_KE_k_space(q, nx)
         E0 = get_total_KE(E_k0)
 
-        q = tvdrk3(nx, dx, dt, q, reconstruction_scheme, limiter)
+        q = tvdrk3(q, nx, dx, dt, nu, reconstruction_scheme, limiter)
+        q_hist.append(q)
 
         E_k = get_KE_k_space(q, nx)
         E = get_total_KE(E_k)
         Et = -(E-E0)/dt
+        D = get_total_KE_dissipation_rate(E_k, nu)
         E_hist.append({"E": E, "E_k": E_k, "t": time, "dt": dt})
-        Et_hist.append({"Et": Et, "t": time, "dt": dt})
+        Et_hist.append({"Et": Et, "D": D, "t": time, "dt": dt})
 
         print(f"  * time: {time:.4f} s", end="\r")
 
@@ -67,7 +90,9 @@ def outer_loop(reconstruction_scheme, limiter, nx):
     result = {
         "lx": lx,
         "nx": nx,
-        "q": q[2:nx+2],
+        "ns": ns,
+        "nu": nu,
+        "q_hist": q_hist,
         "E_hist": E_hist,
         "Et_hist": Et_hist,
         "t": time,
@@ -82,12 +107,13 @@ def get_KE_k_space(q, nx):
     # Get average kinetic energy of the domain (0:nx)
     # E = (1/nx) * 0.5*np.sum(u**2)
 
-    u = q[2:(nx+2), 0]
-    u_k = np.fft.fft(u, norm="forward")
+    u = q
+    u_k = np.fft.fft(u, axis=0, norm="forward")
 
-    Es = 0.5*np.abs(u_k)**2  # Energy spectrum
+    Es = np.zeros((nx-1, u.shape[-1]))
+    Es = 0.5*np.abs(u_k[3:nx+2])**2  # Energy spectrum
     i = np.arange(1, int(nx/2)-1)
-    E_k = 0.5*(Es[i] + Es[nx-i])
+    E_k = np.sum(0.5*(Es[i] + Es[nx-1-i]), axis=-1) / q.shape[-1]
 
     return E_k
 
@@ -114,26 +140,31 @@ def get_total_KE_dissipation_rate(E_k, nu):
     return DD
 
 
-def tvdrk3(nx, dx, dt, q_n, reconstruction_scheme, limiter):
+def tvdrk3(q_n, nx, dx, dt, nu, reconstruction_scheme, limiter):
     """
     3rd Order Runge-Kutta time integrator.
     """
     i = np.arange(3, nx+2)
     q1 = np.copy(q_n)
-    q1[i, :] = q_n[i, :] + dt*rhs(nx, dx, q_n, reconstruction_scheme, limiter)
+    q1[i, :] = q_n[i, :] + dt*rhs(q_n, nx, dx, nu, reconstruction_scheme,
+                                  limiter)
+    q1 = perbc(q1, nx)
 
     q2 = np.copy(q_n)
     q2[i, :] = (0.75*q_n[i, :] + 0.25*q1[i, :]
-                + 0.25*dt*rhs(nx, dx, q1, reconstruction_scheme, limiter))
+                + 0.25*dt*rhs(q1, nx, dx, nu, reconstruction_scheme, limiter))
+    q2 = perbc(q2, nx)
 
     q_np1 = np.copy(q_n)
     q_np1[i, :] = ((1/3)*q_n[i, :] + (2/3)*q2[i, :]
-                   + (2/3)*dt*rhs(nx, dx, q2, reconstruction_scheme, limiter))
+                   + (2/3)*dt*rhs(q2, nx, dx, nu, reconstruction_scheme,
+                                  limiter))
+    q_np1 = perbc(q_np1, nx)
 
     return q_np1
 
 
-def rhs(nx, dx, q, reconstruction_scheme, limiter):
+def rhs(q, nx, dx, nu, reconstruction_scheme, limiter):
     """
     Note::
         q.shape == (nx+5, :)
@@ -141,14 +172,6 @@ def rhs(nx, dx, q, reconstruction_scheme, limiter):
         rhs.shape == (nx-1, :)
                       ^^^^ Specifically from 1:nx + 2
     """
-    # Periodic boundary conditions
-    q[2, :] = q[nx+1, :]
-    q[1, :] = q[nx, :]
-    q[0, :] = q[nx-1, :]
-    q[nx+2, :] = q[3, :]
-    q[nx+3, :] = q[4, :]
-    q[nx+4, :] = q[5, :]
-
     # Reconstruction Schemes
     if reconstruction_scheme == "MUSCL":
         qL_ip12, qR_ip12 = muscl(q, nx, limiter)
@@ -172,7 +195,23 @@ def rhs(nx, dx, q, reconstruction_scheme, limiter):
     rhs = -(F_ip12[i, :] - F_ip12[i-1, :]) / dx
     #       F_ip12         F_im12
 
+    # Viscous contribution
+    uxx = c4ddp(q[2:(nx+3)], nx+1, dx)  # 0 <= x <= nx+1
+
+    rhs += nu*uxx[1:-1]
+
     return rhs
+
+
+def perbc(q, nx):
+    q[2, :] = q[nx+1, :]
+    q[1, :] = q[nx, :]
+    q[0, :] = q[nx-1, :]
+    q[nx+2, :] = q[3, :]
+    q[nx+3, :] = q[4, :]
+    q[nx+4, :] = q[5, :]
+
+    return q
 
 
 def rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12):
@@ -392,7 +431,6 @@ def weno_5c(q, nx):
     # Periodic Compact 5th Order WENO reconstruction
     #
     qL_ip12, qR_ip12 = [np.zeros(q.shape) for _ in range(2)]
-    q = q[:, 0]
 
     # Positive reconstruction @ i+1/2
     i = np.arange(0, nx) + 2
@@ -404,7 +442,9 @@ def weno_5c(q, nx):
     cc = a3
     rr = b1*q[i-1] + b2*q[i] + b3*q[i+1]
 
-    qL_ip12[i, 0] = TDMA_cyclic(aa, bb, cc, rr, aa[0], cc[-1])
+    for n in range(q.shape[-1]):
+        qL_ip12[i, n] = TDMA_cyclic(aa[:, n], bb[:, n], cc[:, n], rr[:, n],
+                                    aa[0, n], cc[-1, n])
 
     # Negative reconstruction @ i-1/2 + 1 (so i+1/2)
     i += 1
@@ -416,7 +456,9 @@ def weno_5c(q, nx):
     cc = a1
     rr = b1*q[i+1] + b2*q[i] + b3*q[i-1]
 
-    qR_ip12[i-1, 0] = TDMA_cyclic(aa, bb, cc, rr, aa[0], cc[-1])
+    for n in range(q.shape[-1]):
+        qR_ip12[i-1, n] = TDMA_cyclic(aa[:, n], bb[:, n], cc[:, n], rr[:, n],
+                                      aa[0, n], cc[-1, n])
 
     return qL_ip12, qR_ip12
 
@@ -507,19 +549,61 @@ def TDMAsolver(a, b, c, d):
     return xc
 
 
+# ============================================
+# =========== Viscous Contribution ===========
+# ============================================
+def c4ddp(f, N, h):
+    #
+    # 4th order compact scheme 2nd derivative periodic
+    #
+    # f_ = f minus repeating part (f[0] = f[-1])
+    f_ = f[:-1]
+    f_pp = np.zeros(f.shape)
+    a = np.zeros(f_.shape)
+    b = np.zeros(f_.shape)
+    c = np.zeros(f_.shape)
+    r = np.zeros(f_.shape)
+
+    a[:] = 1 / 10
+    b[:] = 1
+    c[:] = 1 / 10
+
+    i = np.arange(0, N-2)
+    r[i] = (6/5)*(1/h**2)*(f_[i+1] - 2*f_[i] + f_[i-1])
+
+    r[-1] = (6/5)*(1/h**2)*(f_[0] - 2*f_[-1] + f_[-2])
+
+    alpha = 1/10
+    beta = 1/10
+    if len(f.shape) > 1:
+        for n in range(f.shape[-1]):
+            f_pp[:-1, n] = TDMA_cyclic(a[:, n], b[:, n], c[:, n], r[:, n], alpha,
+                                     beta)
+    else:
+        f_pp[:-1] = TDMA_cyclic(a, b, c, r, alpha, beta)
+
+    # Verify the cyclic Thomas algorithm is correct
+    # f_pp2 = tri_solver_np_cyclic(a[0], b[0], c[0], r, N)
+    # assert np.allclose(f_pp, f_pp2)
+
+    f_pp[-1] = f_pp[0]
+
+    return f_pp
+
+
 # ==========================================
 # =========== Problem Quantities ===========
 # ==========================================
-def get_IC_q(nx, dx):
-    q = np.zeros((nx+5, 1))
+def get_IC_q(nx, dx, ns):
+    q = np.zeros((nx+5, ns))
 
     # Shock from 0.5 <= x < 0.6
     # q[(int(0.5/dx)+2):(int(0.6/dx)+2), :] = 1
 
     # Wave numbers
     lx = nx*dx
-    kx = np.zeros(nx+5)
-    i = np.arange(int(nx/2))
+    kx = np.zeros((nx+5, ns))
+    i = np.stack([np.arange(int(nx/2))]*ns, axis=1)
     kx[2:(int(nx/2)+2)] = 2*np.pi*i / lx
     kx[(int(nx/2)+2):(nx+2)] = 2*np.pi*(i - int(nx/2)) / lx
 
@@ -527,16 +611,27 @@ def get_IC_q(nx, dx):
     A = (2/(3*np.sqrt(np.pi))) * k0**-5
     E_k = A*kx**4 * np.exp(-(kx/k0)**2)
 
+    E = get_total_KE(E_k[3:(int(nx/2)+1), 0])  # Should be == 0.5
+
     # Velocity in Fourier space
-    u_k = np.sqrt(2*E_k) * np.exp(2j*np.pi*random.uniform(0, 1))
+    # u_k = np.sqrt(2*E_k)
+    rand = np.zeros((nx, ns))
+    for n in range(ns):
+        rand[int(nx/2):, n] = [random.uniform(0, 1) for _ in range(int(nx/2))]
+        rand[:int(nx/2), n] = -rand[int(nx/2):, n]
+    u_k = np.sqrt(2*E_k[2:(nx+2)]) * np.exp(2j*np.pi*rand)
 
     # Velocity in physical space
-    u = np.real(np.fft.ifft(u_k, norm="forward"))
+    u = np.fft.ifft(u_k, axis=0, norm="forward")
+    u = np.real(np.fft.ifft(u_k, axis=0, norm="forward"))
 
-    # Periodicity
-    u[nx+2] = u[2]
+    # # Periodicity
+    # u[nx+2] = u[2]
 
-    q[2:(nx+2), 0] = u[2:(nx+2)]
+    q[2:(nx+2)] = u
+    q = perbc(q, nx)
+    E_k1 = get_KE_k_space(q, nx)
+    E1 = get_total_KE(E_k1)
 
     return q
 
@@ -570,11 +665,14 @@ def get_flux(q):
 # ================ Plotting ================
 # ==========================================
 def plot_results(results):
+    print("* Plotting results")
     plt.clf()
     for r in results:
-        y = r["q"]
+        nx = r["nx"]
+        y = r["q_hist"][-1][2:(nx+2), 0]
         l_ = "" if r["limiter"] is None else f", {r['limiter']}"
-        label = f"{r['recon_scheme']}{l_}, nx={r['nx']}"
+        label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
+                 f", $\\nu$={r['nu']:.1e}")
 
         plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
                  linewidth=0.4, label=label)
@@ -587,6 +685,7 @@ def plot_results(results):
     plt.savefig("output/Results_u.png", dpi=400)
 
     plot_E_hist(results)
+    print("  * Done. Plots saved to 'output/*.png'")
 
 
 def plot_E_hist(results):
@@ -603,9 +702,16 @@ def plot_E_hist(results):
                 E = E[:len(t)]
 
             l_ = "" if r["limiter"] is None else f", {r['limiter']}"
-            label = f"{r['recon_scheme']}{l_}, nx={r['nx']}"
+            label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
+                     f", $\\nu$={r['nu']:.1e}")
 
             plt.plot(t, E, linewidth=0.5, label=label)
+
+            if E_key == "Et":  # Plot the formula-value of dissipation rate
+                D = [_["D"] for _ in r[E_hist_key] if not np.isnan(_["D"])]
+                label = (f"D, {r['recon_scheme']}{l_}, nx={r['nx']}"
+                         f", ns={r['ns']}, $\\nu$={r['nu']:.1e}")
+                plt.plot(t, D, linewidth=0.5, label=label)
 
         plt.legend()
         plt.ylabel(E_key)
@@ -619,13 +725,112 @@ def plot_E_hist(results):
         Path("output").mkdir(exist_ok=True)
         plt.savefig(f"output/Results_{E_key}_vs_t.png")
 
+    plt.clf()
+    for r in results:
+        ts = np.array([_["t"] for _ in r["E_hist"] if not np.isnan(_["t"])])
+        idt = np.abs(ts - 0.05).argmin()
+        E_k0 = r["E_hist"][idt]["E_k"]
+        t = r["E_hist"][idt]["t"]
+        k = np.arange(len(E_k0))
+
+        l_ = "" if r["limiter"] is None else f", {r['limiter']}"
+        label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
+                 f", $\\nu$={r['nu']:.1e}")
+
+        plt.plot(k, E_k0, linewidth=0.5, label=label)
+
+    plt.legend()
+    plt.ylabel("E(k)")
+    plt.xlabel("k")
+    plt.yscale("log")
+    plt.xscale("log")
+    plt.suptitle(f"E(k) vs. k for Burgers Problem at t={t:.4f}s")
+    Path("output").mkdir(exist_ok=True)
+    plt.savefig("output/Results_Ek_vs_k.png")
+
+
+# ============================================================
+# ================ Saving DNS Results to disk ================
+# ============================================================
+def export_DNS_results(DNS_results):
+    DNS_dir = Path("DNS")
+    DNS_dir.mkdir(exist_ok=True)
+
+    np.save(DNS_dir/"q_hist.npy", DNS_results["q_hist"])
+    np.save(DNS_dir/"E_hist.npy",
+            [_["E"] for _ in DNS_results["E_hist"]])
+    np.save(DNS_dir/"Ek_hist.npy",
+            [_["E_k"] for _ in DNS_results["E_hist"]])
+    np.save(DNS_dir/"Et_hist.npy",
+            [_["Et"] for _ in DNS_results["Et_hist"]])
+    np.save(DNS_dir/"t_hist.npy",
+            [_["t"] for _ in DNS_results["E_hist"]])
+    np.save(DNS_dir/"dt_hist.npy",
+            [_["dt"] for _ in DNS_results["E_hist"]])
+
+    other_data = {
+        "lx": DNS_results["lx"],
+        "nx": DNS_results["nx"],
+        "ns": DNS_results["ns"],
+        "t": DNS_results["t"],
+        "recon_scheme": DNS_results["recon_scheme"] + " (DNS)",
+        "limiter": DNS_results["limiter"],
+    }
+
+    with open(DNS_dir/"other_data.json", "w") as F:
+        json.dump(other_data, F)
+
+    print(f"\nExported {DNS_results['recon_scheme']} results to "
+          "'DNS' directory.")
+
+
+def load_DNS_results():
+    DNS_dir = Path("DNS")
+    with open(DNS_dir/"other_data.json", "r") as F:
+        DNS_results = json.load(F)
+
+    q_hist = np.load(DNS_dir/"q_hist.npy")
+    E_hist = np.load(DNS_dir/"E_hist.npy")
+    Ek_hist = np.load(DNS_dir/"Ek_hist.npy")
+    Et_hist = np.load(DNS_dir/"Et_hist.npy")
+    t_hist = np.load(DNS_dir/"t_hist.npy")
+    dt_hist = np.load(DNS_dir/"dt_hist.npy")
+
+    DNS_results.update({"E_hist": [
+        {"E": E, "E_k": E_k, "t": t, "dt": dt}
+        for E, E_k, t, dt
+        in zip(E_hist, Ek_hist, t_hist, dt_hist)
+    ]})
+    DNS_results.update({"Et_hist": [
+        {"Et": Et, "t": t, "dt": dt}
+        for Et, t, dt
+        in zip(Et_hist, t_hist, dt_hist)
+    ]})
+    DNS_results.update({"q_hist": q_hist})
+
+    print(f"\nLoaded {DNS_results['recon_scheme']} results from "
+          "'DNS' directory.")
+
+    return DNS_results
+
 
 if __name__ == "__main__":
+    MUSCL = {"recon_scheme": "MUSCL", "nx": 2**9, "ns": 2**6, "nu": 5e-4,
+             "tmax": 0.05}
+    WENO_5 = {"recon_scheme": "WENO-5", "limiter": None, "nu": 5e-4,
+              "tmax": 0.05}
+
+    # DNS
+    # ===
+    # main(cases=[WENO_5 | {"nx": 2**15, "ns": 2**6}], export_as_DNS=True)
+
+    # Other Test Cases
+    # ================
+    # main(cases=[WENO_5 | {"nx": 2**9, "ns": 2**5}])
     main(cases=[
-        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**9},  # 512
-        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**10},
-        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**11},
-        {"recon_scheme": "WENO-5", "limiter": None, "nx": 2**12},
+        # WENO_5 | {"nx": 2**9, "ns": 2**7, "nu": 0},
+        WENO_5 | {"nx": 2**12, "ns": 2**6, "nu": 5e-4, "tmax": 0.2},
+        # WENO_5 | {"nx": 2**9, "ns": 2**7, "nu": 20e-4},
     ])
     # main(cases=[
     #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
@@ -633,10 +838,10 @@ if __name__ == "__main__":
     #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 100},
     # ])
     # main(cases=[
-    #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
-    #     {"recon_scheme": "MUSCL", "limiter": "Van Leer", "nx": 100},
-    #     {"recon_scheme": "MUSCL", "limiter": "Van Albada", "nx": 100},
-    #     {"recon_scheme": "MUSCL", "limiter": "Min-Mod", "nx": 100},
-    #     {"recon_scheme": "MUSCL", "limiter": "Superbee", "nx": 100},
-    #     {"recon_scheme": "MUSCL", "limiter": "Monotonized Central", "nx": 100},
+    #     # WENO_5 | {"nx": 2**9, "ns": 2**6},  # Baseline
+    #     MUSCL | {"limiter": "Van Leer"},
+    #     MUSCL | {"limiter": "Van Albada"},
+    #     MUSCL | {"limiter": "Min-Mod"},
+    #     MUSCL | {"limiter": "Superbee"},
+    #     MUSCL | {"limiter": "Monotonized Central"},
     # ])
