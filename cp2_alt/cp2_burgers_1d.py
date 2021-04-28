@@ -11,22 +11,30 @@ from numba import jit
 import numpy as np
 from pathlib import Path
 import random
+import time
+import warnings
+
+warnings.simplefilter("ignore")
 
 
 def main(cases=[
     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000, "ns": 4,
      "nu": 5e-4, "tmax": 0.05}
-], export_as_DNS=False):
+], export_as_DNS=False, DNS_nu=5e-4, output_dir=None):
 
+    DNS_dir = Path(f"DNS/nu={DNS_nu:.5f}")
     if export_as_DNS:
         assert len(cases) == 1
-        assert not Path("DNS").exists()
-    elif not Path("DNS").exists():
-        print("WARNING: No 'DNS' directory exists. Proceeding without "
-              "DNS results to compare with.")
+        assert cases[0]["nu"] == DNS_nu
+        assert not DNS_dir.exists()
+    elif not DNS_dir.exists():
+        print(f"\nWARNING: '{DNS_dir}' directory does not exist. Proceeding "
+              "without DNS results to compare with.")
 
     results = []
     for case in cases:
+        start_time = time.time()
+
         recon_scheme = case["recon_scheme"]  # Reconstruction Scheme
         limiter = case["limiter"]  # Limiter for MUSCL scheme
         nx = case["nx"]  # Number of cells in x direction
@@ -38,19 +46,22 @@ def main(cases=[
         title = (f"\nSolving Burgers Problem Using {recon_scheme} "
                  f"Reconstruction{l_}nx={nx}, ns={ns}, nu={nu:.1e}"
                  f", tmax={tmax:.2f}")
-        print(title + "\n" + "="*len(title))
+        print(title + "\n" + "="*len(title.split("\n")[1]))
 
         result = outer_loop(recon_scheme, limiter, nx, ns, nu, tmax)
         results.append(result)
 
+        stop_time = time.time()
+        print(f"Execution Time: {stop_time-start_time:.4f} s")
+
     if export_as_DNS:
-        export_DNS_results(results[0])
+        export_DNS_results(results[0], DNS_dir)
     else:
-        if Path("DNS").exists():
-            DNS_results = load_DNS_results()
+        if DNS_dir.exists():
+            DNS_results = load_DNS_results(DNS_dir)
             results.insert(0, DNS_results)
 
-        plot_results(results)
+        plot_results(results, output_dir)
 
 
 def outer_loop(reconstruction_scheme, limiter, nx, ns, nu, tmax):
@@ -69,6 +80,10 @@ def outer_loop(reconstruction_scheme, limiter, nx, ns, nu, tmax):
         dt = (dt
               if time+dt < tmax
               else tmax - time)
+        # Also make sure we get a data point at 0.05 s
+        dt = (0.05-time
+              if time < 0.05 and time+dt > 0.05
+              else dt)
         time += dt
         E_k0 = get_KE_k_space(q, nx)
         E0 = get_total_KE(E_k0)
@@ -173,8 +188,8 @@ def rhs(q, nx, dx, nu, reconstruction_scheme, limiter):
                       ^^^^ Specifically from 1:nx + 2
     """
     # Reconstruction Schemes
-    if reconstruction_scheme == "MUSCL":
-        qL_ip12, qR_ip12 = muscl(q, nx, limiter)
+    if "MUSCL" in reconstruction_scheme:
+        qL_ip12, qR_ip12 = muscl(q, nx, limiter, reconstruction_scheme)
     elif reconstruction_scheme == "WENO-3":
         qL_ip12, qR_ip12 = weno_3(q, nx)
     elif reconstruction_scheme == "WENO-5":
@@ -223,12 +238,11 @@ def rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12):
 # ==============================================
 # =========== Reconstruction Schemes ===========
 # ==============================================
-def muscl(q, nx, limiter):
+def muscl(q, nx, limiter, muscl_type):
     #
     # MUSCL reconstruction scheme
     #
     qL_ip12, qR_ip12 = [np.zeros(q.shape) for _ in range(2)]
-    k = 0.5
 
     # Limiters
     # --------
@@ -268,19 +282,38 @@ def muscl(q, nx, limiter):
         limiter[np.where(np.isnan(limiter))] = 2
         return limiter
 
+    def no_limiter(r):
+        return 1
+
+    limiter = "None" if limiter is None else limiter
     limiter_fcn = {
         "Van Leer": van_leer_limiter,
         "Van Albada": van_albada_limiter,
         "Min-Mod": minmod_limiter,
         "Superbee": superbee_limiter,
         "Monotonized Central": monotonized_central_limiter,
+        "None": no_limiter,
     }[limiter]
     # --------
 
+    # MUSCL Type Determines k_ value
+    # ------------------------------
+    k_ = {
+        "MUSCL-KT": [1, -1],
+        "MUSCL-Quick": 0.5,
+        "MUSCL-Central": 1,
+        "MUSCL-Upwind": -1,
+        "MUSCL-Fromm": 0,
+        "MUSCL-3rd": 1/3,
+    }[muscl_type]
+    muscl_kt = True if muscl_type == "MUSCL-KT" else False
+    # ------------------------------
+
     # Positive reconstruction @ i+1/2
     i = np.arange(0, nx) + 2
-
     r = (q[i] - q[i-1]) / (q[i+1] - q[i])
+
+    k = k_ if not muscl_kt else k_[0]
     qL_ip12[i] = q[i] + 0.25*(
         (1-k)*limiter_fcn(1/r)*(q[i] - q[i-1]) +
         (1+k)*limiter_fcn(r)*(q[i+1] - q[i])
@@ -290,6 +323,7 @@ def muscl(q, nx, limiter):
     i += 1
 
     r = (q[i] - q[i-1]) / (q[i+1] - q[i])
+    k = k_ if not muscl_kt else k_[1]
     qR_ip12[i-1] = q[i] - 0.25*(
         (1+k)*limiter_fcn(1/r)*(q[i] - q[i-1]) +
         (1-k)*limiter_fcn(r)*(q[i+1] - q[i])
@@ -664,8 +698,8 @@ def get_flux(q):
 # ==========================================
 # ================ Plotting ================
 # ==========================================
-def plot_results(results):
-    print("* Plotting results")
+def plot_results(results, output_dir):
+    print("\n* Plotting results")
     plt.clf()
     for r in results:
         nx = r["nx"]
@@ -677,18 +711,19 @@ def plot_results(results):
         plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
                  linewidth=0.4, label=label)
 
-    plt.legend()
+    plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
     plt.ylabel("u")
     plt.xlabel("x")
     plt.suptitle(f"Solutions to Burgers Problem at t={r['t']:.4f}s")
-    Path("output").mkdir(exist_ok=True)
-    plt.savefig("output/Results_u.png", dpi=400)
+    out_dir = "output" if output_dir is None else f"output/{output_dir}"
+    Path(out_dir).mkdir(exist_ok=True)
+    plt.savefig(f"{out_dir}/Results_u.png", dpi=400, bbox_inches="tight")
 
-    plot_E_hist(results)
-    print("  * Done. Plots saved to 'output/*.png'")
+    plot_E_hist(results, output_dir)
+    print(f"  * Done. Plots saved to '{out_dir}/*.png'")
 
 
-def plot_E_hist(results):
+def plot_E_hist(results, output_dir):
     # E_hist.append({"E": E, "E_k": E_k, "t": time, "dt": dt})
     # Et_hist.append({"Et": Et, "t": time, "dt": dt})
     for E_hist_key, E_key in zip(["E_hist", "Et_hist"], ["E", "Et"]):
@@ -707,13 +742,13 @@ def plot_E_hist(results):
 
             plt.plot(t, E, linewidth=0.5, label=label)
 
-            if E_key == "Et":  # Plot the formula-value of dissipation rate
-                D = [_["D"] for _ in r[E_hist_key] if not np.isnan(_["D"])]
-                label = (f"D, {r['recon_scheme']}{l_}, nx={r['nx']}"
-                         f", ns={r['ns']}, $\\nu$={r['nu']:.1e}")
-                plt.plot(t, D, linewidth=0.5, label=label)
+            # if E_key == "Et":  # Plot the formula-value of dissipation rate
+            #     D = [_["D"] for _ in r[E_hist_key] if not np.isnan(_["D"])]
+            #     label = (f"D, {r['recon_scheme']}{l_}, nx={r['nx']}"
+            #              f", ns={r['ns']}, $\\nu$={r['nu']:.1e}")
+            #     plt.plot(t, D, linewidth=0.5, label=label)
 
-        plt.legend()
+        plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
         plt.ylabel(E_key)
         plt.xlabel("t")
         # plt.yscale("log")
@@ -722,8 +757,9 @@ def plot_E_hist(results):
                  if E_key == "E"
                  else "Kinetic Energy Dissipation Rate")
         plt.suptitle(f"{E_var} vs. Time for Burgers Problem")
-        Path("output").mkdir(exist_ok=True)
-        plt.savefig(f"output/Results_{E_key}_vs_t.png")
+        out_dir = "output" if output_dir is None else f"output/{output_dir}"
+        Path(out_dir).mkdir(exist_ok=True)
+        plt.savefig(f"{out_dir}/Results_{E_key}_vs_t.png", bbox_inches="tight")
 
     plt.clf()
     for r in results:
@@ -739,22 +775,24 @@ def plot_E_hist(results):
 
         plt.plot(k, E_k0, linewidth=0.5, label=label)
 
-    plt.legend()
+    plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
     plt.ylabel("E(k)")
     plt.xlabel("k")
     plt.yscale("log")
     plt.xscale("log")
+    plt.ylim([1e-11, 1e-1])
+    plt.xlim([1e0, 1e4])
     plt.suptitle(f"E(k) vs. k for Burgers Problem at t={t:.4f}s")
-    Path("output").mkdir(exist_ok=True)
-    plt.savefig("output/Results_Ek_vs_k.png")
+    out_dir = "output" if output_dir is None else f"output/{output_dir}"
+    Path(out_dir).mkdir(exist_ok=True)
+    plt.savefig(f"{out_dir}/Results_Ek_vs_k.png", bbox_inches="tight")
 
 
 # ============================================================
 # ================ Saving DNS Results to disk ================
 # ============================================================
-def export_DNS_results(DNS_results):
-    DNS_dir = Path("DNS")
-    DNS_dir.mkdir(exist_ok=True)
+def export_DNS_results(DNS_results, DNS_dir):
+    DNS_dir.mkdir(parents=True, exist_ok=True)
 
     np.save(DNS_dir/"q_hist.npy", DNS_results["q_hist"])
     np.save(DNS_dir/"E_hist.npy",
@@ -763,6 +801,8 @@ def export_DNS_results(DNS_results):
             [_["E_k"] for _ in DNS_results["E_hist"]])
     np.save(DNS_dir/"Et_hist.npy",
             [_["Et"] for _ in DNS_results["Et_hist"]])
+    np.save(DNS_dir/"D_hist.npy",
+            [_["D"] for _ in DNS_results["Et_hist"]])
     np.save(DNS_dir/"t_hist.npy",
             [_["t"] for _ in DNS_results["E_hist"]])
     np.save(DNS_dir/"dt_hist.npy",
@@ -772,6 +812,7 @@ def export_DNS_results(DNS_results):
         "lx": DNS_results["lx"],
         "nx": DNS_results["nx"],
         "ns": DNS_results["ns"],
+        "nu": DNS_results["nu"],
         "t": DNS_results["t"],
         "recon_scheme": DNS_results["recon_scheme"] + " (DNS)",
         "limiter": DNS_results["limiter"],
@@ -781,11 +822,10 @@ def export_DNS_results(DNS_results):
         json.dump(other_data, F)
 
     print(f"\nExported {DNS_results['recon_scheme']} results to "
-          "'DNS' directory.")
+          f"'{DNS_dir}' directory.")
 
 
-def load_DNS_results():
-    DNS_dir = Path("DNS")
+def load_DNS_results(DNS_dir):
     with open(DNS_dir/"other_data.json", "r") as F:
         DNS_results = json.load(F)
 
@@ -793,6 +833,7 @@ def load_DNS_results():
     E_hist = np.load(DNS_dir/"E_hist.npy")
     Ek_hist = np.load(DNS_dir/"Ek_hist.npy")
     Et_hist = np.load(DNS_dir/"Et_hist.npy")
+    D_hist = np.load(DNS_dir/"D_hist.npy")
     t_hist = np.load(DNS_dir/"t_hist.npy")
     dt_hist = np.load(DNS_dir/"dt_hist.npy")
 
@@ -802,46 +843,161 @@ def load_DNS_results():
         in zip(E_hist, Ek_hist, t_hist, dt_hist)
     ]})
     DNS_results.update({"Et_hist": [
-        {"Et": Et, "t": t, "dt": dt}
-        for Et, t, dt
-        in zip(Et_hist, t_hist, dt_hist)
+        {"Et": Et, "D": D, "t": t, "dt": dt}
+        for Et, D, t, dt
+        in zip(Et_hist, D_hist, t_hist, dt_hist)
     ]})
     DNS_results.update({"q_hist": q_hist})
 
     print(f"\nLoaded {DNS_results['recon_scheme']} results from "
-          "'DNS' directory.")
+          f"'{DNS_dir}' directory.")
 
     return DNS_results
 
 
 if __name__ == "__main__":
-    MUSCL = {"recon_scheme": "MUSCL", "nx": 2**9, "ns": 2**6, "nu": 5e-4,
-             "tmax": 0.05}
-    WENO_5 = {"recon_scheme": "WENO-5", "limiter": None, "nu": 5e-4,
-              "tmax": 0.05}
+    # Simulation Configurations
+    # =========================
+    MUSCL_base = {"limiter": None, "nx": 2**9, "ns": 2**5,
+                  "nu": 5e-4, "tmax": 0.2}
+    MUSCL_Q = MUSCL_base | {"recon_scheme": "MUSCL-Quick"}
+    MUSCL_KT = MUSCL_base | {"recon_scheme": "MUSCL-KT"}
+    MUSCL_CS = MUSCL_base | {"recon_scheme": "MUSCL-Central"}
+    MUSCL_3rd = MUSCL_base | {"recon_scheme": "MUSCL-3rd"}
+    MUSCL_Up = MUSCL_base | {"recon_scheme": "MUSCL-Upwind"}
+    MUSCL_Fr = MUSCL_base | {"recon_scheme": "MUSCL-Fromm"}
+
+    WENO_3 = {"recon_scheme": "WENO-3", "limiter": None,
+              "nu": 5e-4, "tmax": 0.2}
+    WENO_5 = WENO_3 | {"recon_scheme": "WENO-5"}
+    # =========================
 
     # DNS
     # ===
-    # main(cases=[WENO_5 | {"nx": 2**15, "ns": 2**6}], export_as_DNS=True)
+    main(cases=[WENO_5 | {"nx": 2**15, "ns": 2**5, "nu": 2e-4}],
+         export_as_DNS=True, DNS_nu=2e-4)
 
-    # Other Test Cases
-    # ================
-    # main(cases=[WENO_5 | {"nx": 2**9, "ns": 2**5}])
-    main(cases=[
-        # WENO_5 | {"nx": 2**9, "ns": 2**7, "nu": 0},
-        WENO_5 | {"nx": 2**12, "ns": 2**6, "nu": 5e-4, "tmax": 0.2},
-        # WENO_5 | {"nx": 2**9, "ns": 2**7, "nu": 20e-4},
-    ])
-    # main(cases=[
-    #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 2000},  # Base-line
-    #     {"recon_scheme": "WENO-3", "limiter": None, "nx": 100},
-    #     {"recon_scheme": "WENO-5", "limiter": None, "nx": 100},
-    # ])
-    # main(cases=[
-    #     # WENO_5 | {"nx": 2**9, "ns": 2**6},  # Baseline
-    #     MUSCL | {"limiter": "Van Leer"},
-    #     MUSCL | {"limiter": "Van Albada"},
-    #     MUSCL | {"limiter": "Min-Mod"},
-    #     MUSCL | {"limiter": "Superbee"},
-    #     MUSCL | {"limiter": "Monotonized Central"},
-    # ])
+    # =========================================================================
+    #                            Test Cases Control
+    # =========================================================================
+    comparisons = {
+        "WENO_5_Resolution_Comparison": [
+            WENO_5 | {"nx": 2**9, "ns": 2**5},  # nx=512, ns=32
+            WENO_5 | {"nx": 2**10, "ns": 2**5},
+            WENO_5 | {"nx": 2**11, "ns": 2**5},
+            WENO_5 | {"nx": 2**12, "ns": 2**5},
+            WENO_5 | {"nx": 2**13, "ns": 2**5},
+            WENO_5 | {"nx": 2**14, "ns": 2**5},
+            # nx=2**15 is considered our "DNS" results
+        ],
+        "WENO_3_Viscosity_Comparison": [  # nx=512, ns=32
+            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 0},
+            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 2e-4},
+            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 5e-4},
+            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 20e-4},
+            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 100e-4},
+        ],
+        "WENO_5_Viscosity_Comparison": [  # nx=512, ns=32
+            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 0},
+            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 2e-4},
+            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 5e-4},
+            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 20e-4},
+            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 100e-4},
+        ],
+        "MUSCL_Q_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Q | {"limiter": "Van Leer"},
+            MUSCL_Q | {"limiter": "Van Albada"},
+            MUSCL_Q | {"limiter": "Min-Mod"},
+            MUSCL_Q | {"limiter": "Superbee"},
+            MUSCL_Q | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_KT_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_KT | {"limiter": "Van Leer"},
+            MUSCL_KT | {"limiter": "Van Albada"},
+            MUSCL_KT | {"limiter": "Min-Mod"},
+            MUSCL_KT | {"limiter": "Superbee"},
+            MUSCL_KT | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_CS_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_CS | {"limiter": "Van Leer"},
+            MUSCL_CS | {"limiter": "Van Albada"},
+            MUSCL_CS | {"limiter": "Min-Mod"},
+            MUSCL_CS | {"limiter": "Superbee"},
+            MUSCL_CS | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_3rd_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_3rd | {"limiter": "Van Leer"},
+            MUSCL_3rd | {"limiter": "Van Albada"},
+            MUSCL_3rd | {"limiter": "Min-Mod"},
+            MUSCL_3rd | {"limiter": "Superbee"},
+            MUSCL_3rd | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_Upwind_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Up | {"limiter": "Van Leer"},
+            MUSCL_Up | {"limiter": "Van Albada"},
+            MUSCL_Up | {"limiter": "Min-Mod"},
+            MUSCL_Up | {"limiter": "Superbee"},
+            MUSCL_Up | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_Fromm_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Fr | {"limiter": "Van Leer"},
+            MUSCL_Fr | {"limiter": "Van Albada"},
+            MUSCL_Fr | {"limiter": "Min-Mod"},
+            MUSCL_Fr | {"limiter": "Superbee"},
+            MUSCL_Fr | {"limiter": "Monotonized Central"},
+        ],
+        "MUSCL_Type_Comparison": [  # nx=512, ns=32
+            MUSCL_Q,
+            MUSCL_KT,
+            MUSCL_CS,
+            MUSCL_3rd,
+            MUSCL_Up,
+            MUSCL_Fr,
+        ],
+        "MUSCL_Superbee_Type_Comparison": [  # nx=512, ns=32
+            MUSCL_Q | {"limiter": "Superbee"},
+            MUSCL_KT | {"limiter": "Superbee"},
+            MUSCL_CS | {"limiter": "Superbee"},
+            MUSCL_3rd | {"limiter": "Superbee"},
+            MUSCL_Up | {"limiter": "Superbee"},
+            MUSCL_Fr | {"limiter": "Superbee"},
+        ],
+        "MUSCL_Q_Superbee_Viscosity_Comparison": [  # nx=512, ns=32
+            MUSCL_Q | {"limiter": "Superbee", "nu": 0},
+            MUSCL_Q | {"limiter": "Superbee", "nu": 2e-4},
+            MUSCL_Q | {"limiter": "Superbee", "nu": 5e-4},
+            MUSCL_Q | {"limiter": "Superbee", "nu": 20e-4},
+            MUSCL_Q | {"limiter": "Superbee", "nu": 100e-4},
+        ],
+        "Best_MUSCL_vs_WENO_3_5": [  # TODO
+            WENO_3 | {"nx": 2**11, "ns": 2**5},
+            WENO_5 | {"nx": 2**11, "ns": 2**5},
+        ]
+    }
+
+    comparisons_to_run = [
+        # "WENO_5_Resolution_Comparison",
+        "WENO_3_Viscosity_Comparison",
+        "WENO_5_Viscosity_Comparison",
+        # "MUSCL_Q_Limiters_Comparison",
+        # "MUSCL_KT_Limiters_Comparison",
+        # "MUSCL_CS_Limiters_Comparison",
+        # "MUSCL_3rd_Limiters_Comparison",
+        # "MUSCL_Upwind_Limiters_Comparison",
+        # "MUSCL_Fromm_Limiters_Comparison",
+        # "MUSCL_Type_Comparison",
+        # "MUSCL_Superbee_Type_Comparison",
+        "MUSCL_Q_Superbee_Viscosity_Comparison",
+    ]
+
+    # for comparison_name in comparisons_to_run:
+    #     start_time = time.time()
+
+    #     print("\n" + "#"*79 + "\n" +
+    #           f"Running Comparison: '{comparison_name}'".center(79) +
+    #           "\n" + "#"*79)
+    #     main(cases=comparisons[comparison_name], output_dir=comparison_name)
+
+    #     stop_time = time.time()
+    #     print(f"\nTotal Execution Time: {stop_time-start_time:.4f} s")
+    # =========================================================================
