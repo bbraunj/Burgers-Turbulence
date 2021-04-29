@@ -89,7 +89,7 @@ def outer_loop(reconstruction_scheme, limiter, nx, ns, nu, tmax):
         E0 = get_total_KE(E_k0)
 
         q = tvdrk3(q, nx, dx, dt, nu, reconstruction_scheme, limiter)
-        q_hist.append(q)
+        # q_hist.append(q)
 
         E_k = get_KE_k_space(q, nx)
         E = get_total_KE(E_k)
@@ -700,24 +700,24 @@ def get_flux(q):
 # ==========================================
 def plot_results(results, output_dir):
     print("\n* Plotting results")
-    plt.clf()
-    for r in results:
-        nx = r["nx"]
-        y = r["q_hist"][-1][2:(nx+2), 0]
-        l_ = "" if r["limiter"] is None else f", {r['limiter']}"
-        label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
-                 f", $\\nu$={r['nu']:.1e}")
+    # plt.clf()
+    # for r in results:
+    #     nx = r["nx"]
+    #     y = r["q_hist"][-1][2:(nx+2), 0]
+    #     l_ = "" if r["limiter"] is None else f", {r['limiter']}"
+    #     label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
+    #              f", $\\nu$={r['nu']:.1e}")
 
-        plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
-                 linewidth=0.4, label=label)
+    #     plt.plot(np.linspace(0, r["lx"], r["nx"]), y,
+    #              linewidth=0.4, label=label)
 
-    plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
-    plt.ylabel("u")
-    plt.xlabel("x")
-    plt.suptitle(f"Solutions to Burgers Problem at t={r['t']:.4f}s")
+    # plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
+    # plt.ylabel("u")
+    # plt.xlabel("x")
+    # plt.suptitle(f"Solutions to Burgers Problem at t={r['t']:.4f}s")
     out_dir = "output" if output_dir is None else f"output/{output_dir}"
-    Path(out_dir).mkdir(exist_ok=True)
-    plt.savefig(f"{out_dir}/Results_u.png", dpi=400, bbox_inches="tight")
+    # Path(out_dir).mkdir(parents=True, exist_ok=True)
+    # plt.savefig(f"{out_dir}/Results_u.png", dpi=400, bbox_inches="tight")
 
     plot_E_hist(results, output_dir)
     print(f"  * Done. Plots saved to '{out_dir}/*.png'")
@@ -758,10 +758,13 @@ def plot_E_hist(results, output_dir):
                  else "Kinetic Energy Dissipation Rate")
         plt.suptitle(f"{E_var} vs. Time for Burgers Problem")
         out_dir = "output" if output_dir is None else f"output/{output_dir}"
-        Path(out_dir).mkdir(exist_ok=True)
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
         plt.savefig(f"{out_dir}/Results_{E_key}_vs_t.png", bbox_inches="tight")
 
     plt.clf()
+    fig, (ax0, ax1) = plt.subplots(ncols=2, figsize=(10, 3.75))
+    plots = []
+    labels = []
     for r in results:
         ts = np.array([_["t"] for _ in r["E_hist"] if not np.isnan(_["t"])])
         idt = np.abs(ts - 0.05).argmin()
@@ -773,19 +776,22 @@ def plot_E_hist(results, output_dir):
         label = (f"{r['recon_scheme']}{l_}, nx={r['nx']}, ns={r['ns']}"
                  f", $\\nu$={r['nu']:.1e}")
 
-        plt.plot(k, E_k0, linewidth=0.5, label=label)
+        p = ax0.plot(k, E_k0, linewidth=0.5, label=label)
+        ax1.plot(k, E_k0, linewidth=0.5)
 
-    plt.legend(bbox_to_anchor=(0, -0.15), loc="upper left")
-    plt.ylabel("E(k)")
-    plt.xlabel("k")
-    plt.yscale("log")
-    plt.xscale("log")
-    plt.ylim([1e-11, 1e-1])
-    plt.xlim([1e0, 1e4])
-    plt.suptitle(f"E(k) vs. k for Burgers Problem at t={t:.4f}s")
+        plots.append(p)
+        labels.append(label)
+
+    fig.legend(plots, labels=labels, bbox_to_anchor=(0.5, 0.0),
+               loc="upper center")
+    ax0.set(ylabel="E(k)", xlabel="k", yscale="log", xscale="log",
+            ylim=[1e-12, 1e-1], xlim=[1e0, 1e4])
+    ax1.set(xlabel="k", yscale="log", xscale="log",
+            ylim=[E_k0[-1]*5e-1, E_k0[-1]*1.5e3], xlim=[k[-1]*5e-2, k[-1]*2e0])
+    fig.suptitle(f"E(k) vs. k for Burgers Problem at t={t:.4f}s")
     out_dir = "output" if output_dir is None else f"output/{output_dir}"
-    Path(out_dir).mkdir(exist_ok=True)
-    plt.savefig(f"{out_dir}/Results_Ek_vs_k.png", bbox_inches="tight")
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    fig.savefig(f"{out_dir}/Results_Ek_vs_k.png", bbox_inches="tight", dpi=400)
 
 
 # ============================================================
@@ -829,7 +835,7 @@ def load_DNS_results(DNS_dir):
     with open(DNS_dir/"other_data.json", "r") as F:
         DNS_results = json.load(F)
 
-    q_hist = np.load(DNS_dir/"q_hist.npy")
+    # q_hist = np.load(DNS_dir/"q_hist.npy")
     E_hist = np.load(DNS_dir/"E_hist.npy")
     Ek_hist = np.load(DNS_dir/"Ek_hist.npy")
     Et_hist = np.load(DNS_dir/"Et_hist.npy")
@@ -847,7 +853,7 @@ def load_DNS_results(DNS_dir):
         for Et, D, t, dt
         in zip(Et_hist, D_hist, t_hist, dt_hist)
     ]})
-    DNS_results.update({"q_hist": q_hist})
+    # DNS_results.update({"q_hist": q_hist})
 
     print(f"\nLoaded {DNS_results['recon_scheme']} results from "
           f"'{DNS_dir}' directory.")
@@ -858,7 +864,7 @@ def load_DNS_results(DNS_dir):
 if __name__ == "__main__":
     # Simulation Configurations
     # =========================
-    MUSCL_base = {"limiter": None, "nx": 2**9, "ns": 2**5,
+    MUSCL_base = {"limiter": None, "nx": 2**12, "ns": 2**5,
                   "nu": 5e-4, "tmax": 0.2}
     MUSCL_Q = MUSCL_base | {"recon_scheme": "MUSCL-Quick"}
     MUSCL_KT = MUSCL_base | {"recon_scheme": "MUSCL-KT"}
@@ -874,37 +880,47 @@ if __name__ == "__main__":
 
     # DNS
     # ===
-    main(cases=[WENO_5 | {"nx": 2**15, "ns": 2**5, "nu": 2e-4}],
-         export_as_DNS=True, DNS_nu=2e-4)
+    # main(cases=[WENO_3 | {"nx": 2**15, "ns": 2**6, "nu": 5e-4}],
+    #      export_as_DNS=True, DNS_nu=5e-4)
 
     # =========================================================================
     #                            Test Cases Control
     # =========================================================================
     comparisons = {
+        "WENO_3_Resolution_Comparison": [
+            WENO_3 | {"nx": 2**9, "ns": 2**6},  # nx=512, ns=32
+            WENO_3 | {"nx": 2**10, "ns": 2**6},
+            WENO_3 | {"nx": 2**11, "ns": 2**6},
+            WENO_3 | {"nx": 2**12, "ns": 2**6},
+            WENO_3 | {"nx": 2**13, "ns": 2**6},
+            WENO_3 | {"nx": 2**14, "ns": 2**6},
+            # nx=2**15 is considered our "DNS" results
+        ],
         "WENO_5_Resolution_Comparison": [
-            WENO_5 | {"nx": 2**9, "ns": 2**5},  # nx=512, ns=32
-            WENO_5 | {"nx": 2**10, "ns": 2**5},
-            WENO_5 | {"nx": 2**11, "ns": 2**5},
-            WENO_5 | {"nx": 2**12, "ns": 2**5},
-            WENO_5 | {"nx": 2**13, "ns": 2**5},
-            WENO_5 | {"nx": 2**14, "ns": 2**5},
+            WENO_5 | {"nx": 2**9, "ns": 2**6},  # nx=512, ns=32
+            WENO_5 | {"nx": 2**10, "ns": 2**6},
+            WENO_5 | {"nx": 2**11, "ns": 2**6},
+            WENO_5 | {"nx": 2**12, "ns": 2**6},
+            WENO_5 | {"nx": 2**13, "ns": 2**6},
+            WENO_5 | {"nx": 2**14, "ns": 2**6},
             # nx=2**15 is considered our "DNS" results
         ],
         "WENO_3_Viscosity_Comparison": [  # nx=512, ns=32
-            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 0},
-            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 2e-4},
-            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 5e-4},
-            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 20e-4},
-            WENO_3 | {"nx": 2**9, "ns": 2**5, "nu": 100e-4},
+            WENO_3 | {"nx": 2**12, "ns": 2**5, "nu": 0},
+            WENO_3 | {"nx": 2**12, "ns": 2**5, "nu": 2e-4},
+            WENO_3 | {"nx": 2**12, "ns": 2**5, "nu": 5e-4},
+            WENO_3 | {"nx": 2**12, "ns": 2**5, "nu": 20e-4},
+            WENO_3 | {"nx": 2**12, "ns": 2**5, "nu": 100e-4},
         ],
         "WENO_5_Viscosity_Comparison": [  # nx=512, ns=32
-            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 0},
-            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 2e-4},
-            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 5e-4},
-            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 20e-4},
-            WENO_5 | {"nx": 2**9, "ns": 2**5, "nu": 100e-4},
+            WENO_5 | {"nx": 2**12, "ns": 2**5, "nu": 0},
+            WENO_5 | {"nx": 2**12, "ns": 2**5, "nu": 2e-4},
+            WENO_5 | {"nx": 2**12, "ns": 2**5, "nu": 5e-4},
+            WENO_5 | {"nx": 2**12, "ns": 2**5, "nu": 20e-4},
+            WENO_5 | {"nx": 2**12, "ns": 2**5, "nu": 100e-4},
         ],
         "MUSCL_Q_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Q,
             MUSCL_Q | {"limiter": "Van Leer"},
             MUSCL_Q | {"limiter": "Van Albada"},
             MUSCL_Q | {"limiter": "Min-Mod"},
@@ -912,6 +928,7 @@ if __name__ == "__main__":
             MUSCL_Q | {"limiter": "Monotonized Central"},
         ],
         "MUSCL_KT_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_KT,
             MUSCL_KT | {"limiter": "Van Leer"},
             MUSCL_KT | {"limiter": "Van Albada"},
             MUSCL_KT | {"limiter": "Min-Mod"},
@@ -919,6 +936,7 @@ if __name__ == "__main__":
             MUSCL_KT | {"limiter": "Monotonized Central"},
         ],
         "MUSCL_CS_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_CS,
             MUSCL_CS | {"limiter": "Van Leer"},
             MUSCL_CS | {"limiter": "Van Albada"},
             MUSCL_CS | {"limiter": "Min-Mod"},
@@ -926,6 +944,7 @@ if __name__ == "__main__":
             MUSCL_CS | {"limiter": "Monotonized Central"},
         ],
         "MUSCL_3rd_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_3rd,
             MUSCL_3rd | {"limiter": "Van Leer"},
             MUSCL_3rd | {"limiter": "Van Albada"},
             MUSCL_3rd | {"limiter": "Min-Mod"},
@@ -933,6 +952,7 @@ if __name__ == "__main__":
             MUSCL_3rd | {"limiter": "Monotonized Central"},
         ],
         "MUSCL_Upwind_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Up,
             MUSCL_Up | {"limiter": "Van Leer"},
             MUSCL_Up | {"limiter": "Van Albada"},
             MUSCL_Up | {"limiter": "Min-Mod"},
@@ -940,6 +960,7 @@ if __name__ == "__main__":
             MUSCL_Up | {"limiter": "Monotonized Central"},
         ],
         "MUSCL_Fromm_Limiters_Comparison": [  # nx=512, ns=32
+            MUSCL_Fr,
             MUSCL_Fr | {"limiter": "Van Leer"},
             MUSCL_Fr | {"limiter": "Van Albada"},
             MUSCL_Fr | {"limiter": "Min-Mod"},
@@ -976,28 +997,29 @@ if __name__ == "__main__":
     }
 
     comparisons_to_run = [
-        # "WENO_5_Resolution_Comparison",
-        "WENO_3_Viscosity_Comparison",
-        "WENO_5_Viscosity_Comparison",
-        # "MUSCL_Q_Limiters_Comparison",
+        "MUSCL_Q_Limiters_Comparison",
         # "MUSCL_KT_Limiters_Comparison",
-        # "MUSCL_CS_Limiters_Comparison",
+        "MUSCL_CS_Limiters_Comparison",
         # "MUSCL_3rd_Limiters_Comparison",
         # "MUSCL_Upwind_Limiters_Comparison",
         # "MUSCL_Fromm_Limiters_Comparison",
         # "MUSCL_Type_Comparison",
         # "MUSCL_Superbee_Type_Comparison",
-        "MUSCL_Q_Superbee_Viscosity_Comparison",
+        # "MUSCL_Q_Superbee_Viscosity_Comparison",
+        # "WENO_3_Resolution_Comparison",
+        # "WENO_5_Resolution_Comparison",
+        # "WENO_3_Viscosity_Comparison",
+        # "WENO_5_Viscosity_Comparison",
     ]
 
-    # for comparison_name in comparisons_to_run:
-    #     start_time = time.time()
+    for comparison_name in comparisons_to_run:
+        start_time = time.time()
 
-    #     print("\n" + "#"*79 + "\n" +
-    #           f"Running Comparison: '{comparison_name}'".center(79) +
-    #           "\n" + "#"*79)
-    #     main(cases=comparisons[comparison_name], output_dir=comparison_name)
+        print("\n" + "#"*79 + "\n" +
+              f"Running Comparison: '{comparison_name}'".center(79) +
+              "\n" + "#"*79)
+        main(cases=comparisons[comparison_name], output_dir=comparison_name)
 
-    #     stop_time = time.time()
-    #     print(f"\nTotal Execution Time: {stop_time-start_time:.4f} s")
+        stop_time = time.time()
+        print(f"\nTotal Execution Time: {stop_time-start_time:.4f} s")
     # =========================================================================
