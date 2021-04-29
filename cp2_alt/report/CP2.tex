@@ -1,0 +1,86 @@
+\documentclass[conf]{new-aiaa}
+%\documentclass[journal]{new-aiaa} for journal papers
+\usepackage[utf8]{inputenc}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage[version=4]{mhchem}
+\usepackage{siunitx}
+\usepackage{longtable,tabularx}
+\setlength\LTleft{0pt} 
+
+\usepackage[section]{placeins}
+\usepackage{subcaption}
+\usepackage{pdfpages}
+\usepackage{todonotes}
+\usepackage{rotating}
+\usepackage{bookmark}
+
+\title{}
+
+\author{Josh R. Braun\footnote{MS Student, OSU MAE Department, josh.braun@okstate.edu}}
+\affil{Oklahoma State University, Stillwater, OK, 74078}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper presents...
+\end{abstract}
+
+
+\section{Nomenclature}
+
+{\renewcommand\arraystretch{1.0}
+\noindent\begin{longtable*}{@{}l @{\quad=\quad} l@{}}
+$v_1$ & Variable 1 \\
+$v_2$  & Variable 2 \\
+\end{longtable*}}
+
+
+\section{Introduction}
+
+\lettrine{T}{he} intro goes here... \cite{san2014numerical}
+
+
+\section{Problem Description} \label{sec:problem}
+
+\subsection{Governing Equations} \label{sec:gov_eqns}
+
+
+\section{Numerical Methods} \label{sec:numerical}
+
+\subsection{Algorithm}
+
+\subsection{Time Integration}
+Include $\Delta t$ calculation for stability here. \cite{maulik2018explicit}
+
+\subsection{Compact Scheme for Second Derivative}
+
+\subsection{Reconstruction Schemes for Solving Inviscid Burgers Equation}
+Insert details about solving inviscid Burgers equation here.
+\subsubsection{MUSCL Reconstruction}
+\subsubsection{WENO Reconstruction}
+
+
+\section{Results}
+
+\subsection{MUSCL Variants \& Limiters Comparison}
+
+\subsection{WENO Order and Resolution Comparison}
+
+\subsection{MUSCL vs. WENO Comparison}
+
+
+\section{Conclusions}
+Conclusions go here.
+
+\newpage
+\section*{Appendix}
+
+Here's where the appendix goes.
+
+\bibliography{CP2}
+
+\end{document}
