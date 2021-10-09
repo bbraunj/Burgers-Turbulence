@@ -16,6 +16,18 @@ $ python3.9 -m pip install --user -r requirements.txt
 $ python3.9 cp2_burgers.py
 ```
 
+If you want to run this in the background, you can use `nohup`:
+
+```bash
+$ nohup python3.9 cp2_burgers.py &
+
+# View process id:
+$ ps -aef | grep cp2_burgers_1d
+
+# Kill the process
+$ kill <process-id>
+```
+
 The case configuration is organized by comparisons. For example, if you'd like to run several cases and compare them on the same plots, that would be one comparison. The collection of comparisons that can be run is in the aptly named `comparisons` dictionary:
 
 ```python
