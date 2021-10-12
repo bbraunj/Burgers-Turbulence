@@ -1,4 +1,4 @@
-# CFD Computer Project 2
+# Effects of Finite Volume Reconstruction Scheme on 1D Viscous Burgers Turbulence
 
 This project is in partial fulfillment of course requirements for [MAE 6263, Computational Fluid Dynamics](http://catalog.okstate.edu/courses/mae/)
 at Oklahoma State University.
