@@ -3,7 +3,7 @@
 This project is in partial fulfillment of course requirements for [MAE 6263, Computational Fluid Dynamics](http://catalog.okstate.edu/courses/mae/)
 at Oklahoma State University.
 
-The code is contained in `cp2_burgers.py`, and the report documenting the problem description, numerical methods, and results, is contained in `braun2021burgersturbulence.pdf`.
+The code is contained in `cp2_burgers.py` (CP2 for Computer Project 2, from CFD course), and the report documenting the problem description, numerical methods, and results, is contained in `braun2021burgersturbulence.pdf`.
 
 > **Note:** To run `cp2_burgers.py`, you must have Python3.9 installed. This is because the case configuration dictionaries are constructed with [dictionary Union Operators](https://www.python.org/dev/peps/pep-0584/).
 
