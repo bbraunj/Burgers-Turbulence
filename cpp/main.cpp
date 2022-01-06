@@ -1,6 +1,44 @@
 #include <cmath>
+#include <math.h>
 #include <iostream>
 #include <vector>
+// #include <xtensor/xarray.hpp>
+// #include <xtensor/xio.hpp>
+// #include <xtensor/xview.hpp>
+
+
+// Function declarations
+template <typename T>
+void outer_loop( const size_t nx, const size_t ns, const T nu, const T dt);
+template <typename T>
+std::vector<T> tvdrk3( std::vector<T> q_n, const size_t nx, const T dx, const T dt, const T nu);
+template <typename T>
+std::vector<T> rhs( std::vector<T> q, const size_t ns, const size_t nx, const T dx, const T nu);
+template <typename T>
+std::pair<std::vector<T>, std::vector<T>> weno_5( std::vector<T> q, const size_t nx );
+template <typename T>
+std::vector<T> TDMAsolver( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d);
+template <typename T>
+std::vector<T> TDMA_cyclic( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d, const T alpha, const T beta);
+template <typename T>
+std::vector<std::vector<T>> get_IC_q(const size_t ns, const size_t nx, const T dx);
+
+const double pi{ 3.1415926535897 };
+
+
+int main() {
+  using namespace std;
+  cout << "Hello World!";
+}
+
+
+template <typename T>
+void outer_loop( const size_t nx, const size_t ns, const T nu, const T dt) {
+  const double lx{ 2*pi };
+  const double dx{ lx / nx };
+  std::vector<std::vector<T>> q = get_IC_q(ns, nx, dx);
+
+}
 
 
 template <typename T>
@@ -180,7 +218,31 @@ std::vector<std::vector<T>> rhs(
 }
 
 
-int main() {
-  using namespace std;
-  cout << "Hello World!";
+template <typename T>
+std::vector<std::vector<T>> get_IC_q(const size_t ns, const size_t nx, const T dx) {
+  // nx+5 because 2 ghost points at lhs of domain, 3 ghost points at rhs of domain
+  std::vector<std::vector<T>> q( ns, std::vector<T>(nx+5, 0) );
+  T lx = nx*dx;
+
+  // Wave numbers
+  std::vector<std::vector<T>> kx ( ns, std::vector<T>(nx+5, 0) );
+  std::vector<std::vector<T>> E_k( ns, std::vector<T>(nx+5, 0) );
+  std::vector<T> arange;
+  for (size_t i{}; i<nx/2; i++) { arange.emplace_back{i}; }
+  auto k0 = 10;
+  auto A = ( 2 / (3*sqrt(pi)) ) * pow(k0, -5);
+
+  for (size_t s{}; s<ns; s++) {
+    for (size_t i{ 2 }; i<(nx/2 + 2); i++) {
+      kx[s][i] = 2*pi*i / lx;
+    }
+    for (size_t i{ nx/2 + 2 }; i<(nx+2); i++) {
+      kx[s][i] = 2*pi*( i - (nx/2) ) / lx;
+    }
+
+    for (size_t i{}; i<nx+5; i++) {
+      E_k[s][i] = A*pow( kx[s][i], 4 ) * exp( -pow(kx[s][i]/k0, 2) );
+    }
+  }
+
 }
