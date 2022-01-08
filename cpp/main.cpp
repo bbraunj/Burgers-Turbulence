@@ -1,10 +1,15 @@
 #include <cmath>
+#include <complex>
 #include <math.h>
 #include <iostream>
 #include <vector>
-// #include <xtensor/xarray.hpp>
-// #include <xtensor/xio.hpp>
-// #include <xtensor/xview.hpp>
+#include <xtensor/xadapt.hpp>
+#include <xtensor/xarray.hpp>
+#include <xtensor/xcomplex.hpp>
+#include <xtensor/xio.hpp>
+#include <xtensor/xrandom.hpp>
+#include <xtensor/xview.hpp>
+#include <xtensor-fftw/basic.hpp>
 
 
 // Function declarations
@@ -219,30 +224,43 @@ std::vector<std::vector<T>> rhs(
 
 
 template <typename T>
-std::vector<std::vector<T>> get_IC_q(const size_t ns, const size_t nx, const T dx) {
+xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx) {
+  using xarray = xt::xarray<T>;
+  using namespace std::literals::complex_literals;
+
   // nx+5 because 2 ghost points at lhs of domain, 3 ghost points at rhs of domain
-  std::vector<std::vector<T>> q( ns, std::vector<T>(nx+5, 0) );
+  xarray q = xt::zeros<T>({nx+5, ns});
   T lx = nx*dx;
 
   // Wave numbers
-  std::vector<std::vector<T>> kx ( ns, std::vector<T>(nx+5, 0) );
-  std::vector<std::vector<T>> E_k( ns, std::vector<T>(nx+5, 0) );
-  std::vector<T> arange;
-  for (size_t i{}; i<nx/2; i++) { arange.emplace_back{i}; }
-  auto k0 = 10;
-  auto A = ( 2 / (3*sqrt(pi)) ) * pow(k0, -5);
-
-  for (size_t s{}; s<ns; s++) {
-    for (size_t i{ 2 }; i<(nx/2 + 2); i++) {
-      kx[s][i] = 2*pi*i / lx;
-    }
-    for (size_t i{ nx/2 + 2 }; i<(nx+2); i++) {
-      kx[s][i] = 2*pi*( i - (nx/2) ) / lx;
-    }
-
-    for (size_t i{}; i<nx+5; i++) {
-      E_k[s][i] = A*pow( kx[s][i], 4 ) * exp( -pow(kx[s][i]/k0, 2) );
-    }
+  xarray s = xt::zeros<T>({nx/2, ns});
+  for (size_t i{}; i<nx/2; i++) {
+    xt::view(s, i, xt::all()) = xt::ones<T>({ns})*i;
   }
 
+  xarray kx = xt::zeros<T>({nx+5, ns});
+  xt::view(kx, xt::range(2, (nx/2 + 2)), xt::all())        = 2*pi*s / lx;
+  xt::view(kx, xt::range((nx/2 + 2), (nx + 2)), xt::all()) = 2*pi*(s - nx/2) / lx;
+
+  // Initial energy spectrum in wavenumber space
+  const int k0 = 10;
+  auto A = ( 2 / (3*sqrt(pi)) ) * pow(k0, -5);
+  xarray E_k = A*xt::pow(kx, 4) * xt::exp(-xt::pow(kx/k0, 2));
+
+  // Velocity in Fourier space
+  xarray r = xt::random::rand<double>({nx, ns});
+  xt::view(r, xt::range(0, nx/2), xt::all()) = -xt::view(r, xt::range(0, nx/2), xt::all());
+  xt::xarray<std::complex<T>> u_k = xt::sqrt(2*xt::view(E_k, xt::range(2, nx+2), xt::all()))
+                                  * xt::exp(2.0i * pi * r);
+
+  // Velocity in physical space
+  xarray u = xt::zeros<double>({nx, ns});
+  for (size_t i{}; i<ns; i++) {
+    xt::xarray<std::complex<double>> u_ki = xt::view(u_k, xt::all(), i);
+    xt::view(u, xt::all(), i) = xt::real(xt::fftw::fft(u_ki));
+  }
+
+  xt::view(q, xt::range(2, nx+2), xt::all()) = u;
+//   q = perbc(q, nx);
+  return q;
 }
