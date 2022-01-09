@@ -85,4 +85,24 @@ int main() {
   std::cout << "u_k:\n" << u_k << std::endl;
   std::cout << "u:\n" << u << std::endl;
   std::cout << "q:\n" << q << std::endl;
+
+  xarray c_ip12 = xt::zeros<double>(q.shape());
+  xarray test = xt::vstack(xt::xtuple(
+    xarray(xt::view(q, xt::range(0, nx), xt::all())),
+    xarray(xt::view(q, xt::range(1, nx+1), xt::all())),
+    xarray(xt::view(q, xt::range(2, nx+2), xt::all())),
+    xarray(xt::view(q, xt::range(3, nx+3), xt::all())),
+    xarray(xt::view(q, xt::range(4, nx+4), xt::all())),
+    xarray(xt::view(q, xt::range(5, nx+5), xt::all()))
+  ));
+  xt::view(c_ip12, xt::range(2, nx+2), xt::all()) = xt::amax(test, {0});
+  std::cout << "test" << xt::adapt(test.shape()) << std::endl;
+  std::cout << test << std::endl;
+  std::cout << "c_ip12" << xt::adapt(c_ip12.shape()) << std::endl;
+  std::cout << c_ip12 << std::endl;
+
+  const double cfl = 0.5;
+  auto dt = xt::nanmin<double>(cfl * dx / c_ip12);
+  std::cout << (cfl * dx / c_ip12) << std::endl;
+  std::cout << "dt = " << dt << std::endl;
 }

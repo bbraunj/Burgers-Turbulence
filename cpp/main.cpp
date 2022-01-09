@@ -1,7 +1,8 @@
 #include <cmath>
 #include <complex>
-#include <math.h>
 #include <iostream>
+#include <math.h>
+#include <utility>
 #include <vector>
 #include <xtensor/xadapt.hpp>
 #include <xtensor/xarray.hpp>
@@ -14,19 +15,33 @@
 
 // Function declarations
 template <typename T>
-void outer_loop( const size_t nx, const size_t ns, const T nu, const T dt);
+void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
 template <typename T>
-std::vector<T> tvdrk3( std::vector<T> q_n, const size_t nx, const T dx, const T dt, const T nu);
+xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt, const T nu);
 template <typename T>
-std::vector<T> rhs( std::vector<T> q, const size_t ns, const size_t nx, const T dx, const T nu);
+xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu);
 template <typename T>
-std::pair<std::vector<T>, std::vector<T>> weno_5( std::vector<T> q, const size_t nx );
+xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
+                              xt::xarray<T> FL,
+                              xt::xarray<T> qR_ip12,
+                              xt::xarray<T> qL_ip12,
+                              xt::xarray<T> c_ip12);
+template <typename T>
+std::pair<xt::xarray<T> xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx);
 template <typename T>
 std::vector<T> TDMAsolver( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d);
 template <typename T>
 std::vector<T> TDMA_cyclic( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d, const T alpha, const T beta);
 template <typename T>
-std::vector<std::vector<T>> get_IC_q(const size_t ns, const size_t nx, const T dx);
+xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx);
+template <typename T>
+xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx);
+template <typename T>
+T get_dt(xt::xarray<T> q, const size_t nx, const T dx);
+template <typename T>
+xt::xarray<T> get_wave_speeds(xt::xarray<T> q, const size_t nx);
+template <typename T>
+xt::xarray<T> get_flux(xt::xarray<T> q);
 
 const double pi{ 3.1415926535897 };
 
@@ -38,35 +53,120 @@ int main() {
 
 
 template <typename T>
-void outer_loop( const size_t nx, const size_t ns, const T nu, const T dt) {
+void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
   const double lx{ 2*pi };
   const double dx{ lx / nx };
-  std::vector<std::vector<T>> q = get_IC_q(ns, nx, dx);
+  xt::xarray<T> q = get_IC_q(ns, nx, dx);
+  T time{ 0 };
 
+  while (time < tmax) {
+    dt = get_dt(q, nx, dx);
+
+    // Make sure we don't go past tmax
+    dt = (time + dt) < tmax ? dt : tmax - time;
+    // Also make sure we get a data point at 0.05 s
+    dt = (time < 0.05 && time+dt > 0.05) ? (0.05 - time) : dt;
+    time += dt;
+
+    // Advance a time step using TVDRK3 time integration
+    q = tvdrk3(q, nx, dx, dt, nu);
+
+    std::cout << "  * time: " << std::setprecision(4) << time << " s\r";
+  }
+
+  std::cout << "\n  * Done" << std::endl;
 }
 
 
 template <typename T>
-std::pair<std::vector<T>, std::vector<T>> weno_5( std::vector<T> q, const size_t nx ) {
-  using vecT = std::vector<T>;
-  vecT b0      (nx+5, 0);
-  vecT b1      (nx+5, 0);
-  vecT b2      (nx+5, 0);
+xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt, const T nu) {
+  // 3rd Order Runge-Kutta time integrator.
+  xt::xarray<T> q1( q_n );
+  auto i = xt::range(3, nx+2);
+  xt::view(q1, i, xt::all()) = (
+    xt::view(q_n, i, xt::all()) +
+    dt * rhs(q_n, nx, dx, nu)
+  );
+  q1 = perbc(q1, nx);
 
-  vecT a0      (nx+5, 0);
-  vecT a1      (nx+5, 0);
-  vecT a2      (nx+5, 0);
+  xt::xarray<T> q2( q_n );
+  xt::view(q2, i, xt::all()) = (
+    0.75 * xt::view(q_n, i, xt::all()) +
+    0.25 * xt::view(q1,  i, xt::all()) +
+    0.25 * dt * rhs(q1, nx, dx, nu)
+  );
+  q2 = perbc(q2, nx);
 
-  vecT w0      (nx+5, 0);
-  vecT w1      (nx+5, 0);
-  vecT w2      (nx+5, 0);
+  xt::xarray<T> q_np1( q_n );
+  xt::view(q_np1, i, xt::all()) = (
+    (1/3) * xt::view(q_n, i, xt::all()) +
+    (2/3) * xt::view(q2,  i, xt::all()) +
+    (2/3) * dt * rhs(q2, nx, dx, nu)
+  );
+  q_np1 = perbc(q_np1, nx);
 
-  vecT q0      (nx+5, 0);
-  vecT q1      (nx+5, 0);
-  vecT q2      (nx+5, 0);
+  return q_np1;
+}
 
-  vecT qL_ip12 (nx+5, 0);
-  vecT qR_ip12 (nx+5, 0);
+
+template <typename T>
+xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu) {
+  // Note:
+  //   q.shape() == {nx+5, ns}
+  //                 ^^^^ Specifically from 0:(nx+5)
+  //   rhs.shape() == {nx-1, ns}
+  //                   ^^^^ Specifically from 1:(nx+2)
+
+  // Reconstruction Scheme
+  xt::xarray<T> [qL_ip12, qR_ip12] = weno_5(q, nx);
+
+  xt::xarray<T> c_ip12 = get_wave_speeds(q, nx);
+  FR = get_flux(qR_ip12);
+  FL = get_flux(qL_ip12);
+
+  // Riemann Solvers
+  xt::xarray<T> F_ip12 = rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12);
+
+  xt::xarray<T> rhs = -(
+      xt::view(F_ip12, xt::range(3, nx+2), xt::all())  // F_ip12
+    - xt::view(F_ip12, xt::range(2, nx+1), xt::all())  // F_im12
+  ) / dx;
+
+  // Viscous contribution
+  // xt::xarray<T> uxx = c4ddp(xt::view(q, xt::range(2, nx+3), xt::all()), nx+1, dx);
+
+  // rhs += nu*xt::view(uxx, xt::range(1, nx), xt::all());
+
+  return rhs;
+}
+
+template <typename T>
+xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
+                              xt::xarray<T> FL,
+                              xt::xarray<T> qR_ip12,
+                              xt::xarray<T> qL_ip12,
+                              xt::xarray<T> c_ip12) {
+  xt::xarray<T> F_ip12 = 0.5*((FR + FL) - c_ip12*(qR_ip12 - qL_ip12));
+
+  return F_ip12;
+}
+
+template <typename T>
+std::pair<xt::xarray<T> xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx) {
+  xt::xarray<T> b0      = xt::zeros<T>(q.shape());
+  xt::xarray<T> b1      = xt::zeros<T>(q.shape());
+  xt::xarray<T> b2      = xt::zeros<T>(q.shape());
+
+  xt::xarray<T> a0      = xt::zeros<T>(q.shape());
+  xt::xarray<T> a1      = xt::zeros<T>(q.shape());
+  xt::xarray<T> a2      = xt::zeros<T>(q.shape());
+
+  xt::xarray<T> w0      = xt::zeros<T>(q.shape());
+  xt::xarray<T> w1      = xt::zeros<T>(q.shape());
+  xt::xarray<T> w2      = xt::zeros<T>(q.shape());
+
+  xt::xarray<T> qL_ip12 = xt::zeros<T>(q.shape());
+  xt::xarray<T> qR_ip12 = xt::zeros<T>(q.shape());
 
   // Linear weighting coefficients
   float d0 = 1/10;
@@ -74,57 +174,96 @@ std::pair<std::vector<T>, std::vector<T>> weno_5( std::vector<T> q, const size_t
   float d2 = 3/10;
   float eps = 1e-6;
 
-  for (size_t i{ 2 }; i<nx+3; i++) {
-    // Smoothness indicators
-    b0[i] = ((13/12)*pow( q[i-2] - 2*q[i-1] +   q[i], 2 )
-             + (1/4)*pow( q[i-2] - 4*q[i-1] + 3*q[i], 2 ));
-    b1[i] = ((13/12)*pow( q[i-1] - 2*q[i] + q[i+1], 2 )
-             + (1/4)*pow( q[i-1] - q[i+1], 2 ));
-    b2[i] = ((13/12)*pow(   q[i] - 2*q[i+1] + q[i+2], 2 )
-             + (1/4)*pow( 3*q[i] - 4*q[i+1] + q[i+2], 2 ));
-  }
+  // Smoothness indicators
+  xt::view(b0, xt::range(2, nx+3), xt::all()) = (
+    (13/12)*xt::pow((    xt::view(q, xt::range(0, nx+1), xt::all())  // i-2
+                     - 2*xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
+                     +   xt::view(q, xt::range(2, nx+3), xt::all())  // i
+                    ), 2)
+    + (1/4)*xt::pow((    xt::view(q, xt::range(0, nx+1), xt::all())  // i-2
+                     - 4*xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
+                     + 3*xt::view(q, xt::range(2, nx+3), xt::all())  // i
+                    ), 2 )
+  );
+  xt::view(b1, xt::range(2, nx+3), xt::all()) = (
+    (13/12)*xt::pow((    xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
+                     - 2*xt::view(q, xt::range(2, nx+3), xt::all())  // i
+                     +   xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
+                    ), 2)
+    + (1/4)*xt::pow((  xt::view(q, xt::range(0, nx+1), xt::all())    // i-1
+                     - xt::view(q, xt::range(2, nx+3), xt::all())    // i+1
+                    ), 2 )
+  );
+  xt::view(b2, xt::range(2, nx+3), xt::all()) = (
+    (13/12)*xt::pow((    xt::view(q, xt::range(2, nx+3), xt::all())  // i
+                     - 2*xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
+                     +   xt::view(q, xt::range(4, nx+5), xt::all())  // i+2
+                    ), 2)
+    + (1/4)*xt::pow((  3*xt::view(q, xt::range(2, nx+3), xt::all())  // i
+                     - 4*xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
+                     +   xt::view(q, xt::range(4, nx+5), xt::all())  // i+2
+                    ), 2 )
+  );
+
+  // Nonlinear weights
+  i = xt::range(2, nx+2);
+  xt::view(a0, i, xt::all()) = d0 / xt::pow(xt::view(b0, i, xt::all()) + eps, 2);
+  xt::view(a1, i, xt::all()) = d1 / xt::pow(xt::view(b1, i, xt::all()) + eps, 2);
+  xt::view(a2, i, xt::all()) = d2 / xt::pow(xt::view(b2, i, xt::all()) + eps, 2);
+
+  xt::xarray<T> a_sum = (a0 + a1 + a2);
+  w0 = a0 / a_sum;
+  w1 = a1 / a_sum;
+  w2 = a2 / a_sum;
 
   // Positive reconstruction @ i+1/2
-  for (size_t i{ 2 }; i<nx+2; i++) {
-    // Nonlinear weights
-    a0[i] = d0 / pow( b0[i] + eps, 2 );
-    a1[i] = d1 / pow( b1[i] + eps, 2 );
-    a2[i] = d2 / pow( b2[i] + eps, 2 );
-
-    T a_sum{ a0[i] + a1[i] + a2[i] };
-    w0[i] = a0[i] / a_sum;
-    w1[i] = a1[i] / a_sum;
-    w2[i] = a2[i] / a_sum;
-
-    // Positive reconstruction
-    q0[i] = 2*q[i-2] - 7*q[i-1] + 11*q[i];
-    q1[i] = -q[i-1]  + 5*q[i]   + 2*q[i+1];
-    q2[i] = 2*q[i]   + 5*q[i+1] - q[i+2];
-    qL_ip12[i] = (w0[i] / 6)*q0[i]
-               + (w1[i] / 6)*q1[i]
-               + (w2[i] / 6)*q2[i];
-  }
+  xt::xarray<T> q0 = (
+       2*xt::view(q, xt::range(0, nx),   xt::all())  // i-2
+    -  7*xt::view(q, xt::range(1, nx+1), xt::all())  // i-1
+    + 11*xt::view(q, xt::range(2, nx+2), xt::all())  // i
+  );
+  xt::xarray<T> q1 = (
+       -xt::view(q, xt::range(1, nx+1), xt::all())   // i-1
+    + 5*xt::view(q, xt::range(2, nx+2), xt::all())   // i
+    + 2*xt::view(q, xt::range(3, nx+3), xt::all())   // i+1
+  );
+  xt::xarray<T> q2 = (
+      2*xt::view(q, xt::range(2, nx+2), xt::all())   // i
+    + 5*xt::view(q, xt::range(3, nx+3), xt::all())   // i+1
+    -   xt::view(q, xt::range(4, nx+4), xt::all())   // i+2
+  );
+  xt::view(qL_ip12, i, xt::all()) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
 
   // Negative reconstruction @ i-1/2 + 1 (so i+1/2)
-  for (size_t i{ 3 }; i<nx+3; i++) {
-    // Nonlinear weights
-    a0[i] = d0 / pow( b0[i] + eps, 2 );
-    a1[i] = d1 / pow( b1[i] + eps, 2 );
-    a2[i] = d2 / pow( b2[i] + eps, 2 );
+  i2 = xt::range(3, nx+3);
+  xt::view(a0, i2, xt::all()) = d0 / xt::pow(xt::view(b0, i2, xt::all()) + eps, 2);
+  xt::view(a1, i2, xt::all()) = d1 / xt::pow(xt::view(b1, i2, xt::all()) + eps, 2);
+  xt::view(a2, i2, xt::all()) = d2 / xt::pow(xt::view(b2, i2, xt::all()) + eps, 2);
 
-    T a_sum{ a0[i] + a1[i] + a2[i] };
-    w0[i] = a0[i] / a_sum;
-    w1[i] = a1[i] / a_sum;
-    w2[i] = a2[i] / a_sum;
+  xt::xarray<T> a_sum = (a0 + a1 + a2);
+  w0 = a0 / a_sum;
+  w1 = a1 / a_sum;
+  w2 = a2 / a_sum;
 
-    // Positive reconstruction
-    q0[i] = 2*q[i+2] - 7*q[i+1] + 11*q[i];
-    q1[i] = -q[i+1]  + 5*q[i]   + 2*q[i-1];
-    q2[i] = 2*q[i]   + 5*q[i-1] - q[i-2];
-    qR_ip12[i-1] = (w0[i] / 6)*q0[i]
-                 + (w1[i] / 6)*q1[i]
-                 + (w2[i] / 6)*q2[i];
-  }
+  q0 = (
+       2*xt::view(q, xt::range(4, nx+4), xt::all())  // i2+2
+    -  7*xt::view(q, xt::range(3, nx+3), xt::all())  // i2+1
+    + 11*xt::view(q, xt::range(2, nx+2), xt::all())  // i2
+  );
+  q1 = (
+       -xt::view(q, xt::range(3, nx+3), xt::all())   // i2+1
+    + 5*xt::view(q, xt::range(2, nx+2), xt::all())   // i2
+    + 2*xt::view(q, xt::range(1, nx+1), xt::all())   // i2-1
+  );
+  q2 = (
+      2*xt::view(q, xt::range(2, nx+2), xt::all())   // i2
+    + 5*xt::view(q, xt::range(1, nx+1), xt::all())   // i2-1
+    -   xt::view(q, xt::range(0, nx),   xt::all())   // i2-2
+  );
+  xt::view(qR_ip12, i, xt::all()) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
+
+  std::pair<xt::xarray<T>, xt::xarray<T>> p(qL_ip12, qR_ip12);
+  return p;
 }
 
 
@@ -188,42 +327,6 @@ std::vector<T> TDMA_cyclic(
 
 
 template <typename T>
-std::vector<std::vector<T>> rhs(
-    std::vector<std::vector<T>> q,
-    const size_t ns,
-    const size_t nx,
-    const T dx,
-    const T nu
-    ) {
-
-  using vecT = std::vector<T>;
-
-  for (size_t s{}; s<ns; s++) {
-    vecT& qs = &q[s];
-
-    auto& [qL_ip12, qR_ip12] = weno_5(qs, nx);
-
-    vecT c_ip12 = get_wave_speeds(q, nx);
-    vecT FR = get_flux(qR_ip12);
-    vecT FL = get_flux(qL_ip12);
-
-    // Riemann Solver
-    vecT F_ip12 = rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12);
-
-    // Viscous contribution
-    vecT uxx = c4ddp(qs.begin()+2, qs.cend(), nx+1, dx);
-
-    vecT rhs(nx, 0);
-    for (size_t i{}; i<nx; i++) {
-      //         F_ip12        F_im12
-      rhs[i] -= (F_ip12[i+3] - F_ip12[i+2]) / dx;
-      rhs[i] += nu*uxx[i+1];
-    }
-  }
-}
-
-
-template <typename T>
 xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx) {
   using xarray = xt::xarray<T>;
   using namespace std::literals::complex_literals;
@@ -261,6 +364,50 @@ xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx) {
   }
 
   xt::view(q, xt::range(2, nx+2), xt::all()) = u;
-//   q = perbc(q, nx);
+  q = perbc(q, nx);
   return q;
+}
+
+template <typename T>
+xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx) {
+  xt::view(q, 2, xt::all()) = xt::view(q, nx+1, xt::all());
+  xt::view(q, 1, xt::all()) = xt::view(q, nx, xt::all());
+  xt::view(q, 0, xt::all()) = xt::view(q, nx-1, xt::all());
+  xt::view(q, nx+2, xt::all()) = xt::view(q, 3, xt::all());
+  xt::view(q, nx+3, xt::all()) = xt::view(q, 4, xt::all());
+  xt::view(q, nx+4, xt::all()) = xt::view(q, 5, xt::all());
+
+  return q;
+}
+
+template <typename T>
+T get_dt(xt::xarray<T> q, const size_t nx, const T dx) {
+  const T cfl = 0.5;
+  xt::xarray<T> c_ip12 = get_wave_speeds(q, nx);
+  T dt = xt::nanmin<double>(cfl * dx / c_ip12);
+
+  return dt;
+}
+
+template <typename T>
+xt::xarray<T> get_wave_speeds(xt::xarray<T> q, const size_t nx) {
+  xt::xarray<T> c_ip12 = xt::zeros<T>(q.shape());
+  xarray stacked_q = xt::vstack(xt::xtuple(
+    xarray(xt::view(q, xt::range(0, nx), xt::all())),
+    xarray(xt::view(q, xt::range(1, nx+1), xt::all())),
+    xarray(xt::view(q, xt::range(2, nx+2), xt::all())),
+    xarray(xt::view(q, xt::range(3, nx+3), xt::all())),
+    xarray(xt::view(q, xt::range(4, nx+4), xt::all())),
+    xarray(xt::view(q, xt::range(5, nx+5), xt::all()))
+  ));
+  xt::view(c_ip12, xt::range(2, nx+2), xt::all()) = xt::amax(stacked_q, {0});
+
+  return c_ip12;
+}
+
+template <typename T>
+xt::xarray<T> get_flux(xt::xarray<T> q) {
+  xt::xarray<T> F = xt::pow(q, 2) / 2;
+
+  return F;
 }
