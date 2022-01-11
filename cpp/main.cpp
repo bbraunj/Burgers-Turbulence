@@ -14,6 +14,7 @@
 
 
 // Function declarations
+// ---------------------
 template <typename T>
 void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
 template <typename T>
@@ -27,21 +28,30 @@ xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
                               xt::xarray<T> qL_ip12,
                               xt::xarray<T> c_ip12);
 template <typename T>
+xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx);
+
+// Reconstruction Scheme
+template <typename T>
 std::pair<xt::xarray<T> xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx);
+
+// Viscous Contribution
 template <typename T>
-std::vector<T> TDMAsolver( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d);
+xt::xarray<T> c4ddp(xt::xarray<T> f, const size_T N, const T h);
 template <typename T>
-std::vector<T> TDMA_cyclic( std::vector<T> a, std::vector<T> b, std::vector<T> c, std::vector<T> d, const T alpha, const T beta);
+xt::xarray<T> TDMA_cyclic(xt::xarray<T> a, xt::xarray<T> b, xt::xarray<T> c, xt::xarray<T> d, const T alpha, const T beta);
+template <typename T>
+xt::xarray<T> TDMAsolver(xt::xarray<T> a, xt::xarray<T> b, xt::xarray<T> c, xt::xarray<T> d);
+
+// Problem Quantities
 template <typename T>
 xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx);
-template <typename T>
-xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx);
 template <typename T>
 T get_dt(xt::xarray<T> q, const size_t nx, const T dx);
 template <typename T>
 xt::xarray<T> get_wave_speeds(xt::xarray<T> q, const size_t nx);
 template <typename T>
 xt::xarray<T> get_flux(xt::xarray<T> q);
+// ---------------------
 
 const double pi{ 3.1415926535897 };
 
@@ -268,58 +278,55 @@ std::pair<xt::xarray<T> xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx) 
 
 
 template <typename T>
-std::vector<T> TDMAsolver(
-    std::vector<T> a,
-    std::vector<T> b,
-    std::vector<T> c,
-    std::vector<T> d
+xt::xarray<T> TDMA_cyclic(
+    xt::xarray<T> a,
+    xt::xarray<T> b,
+    xt::xarray<T> c,
+    xt::xarray<T> d,
+    const T alpha, const T beta
     ) {
 
-  const size_t n = a.size();
+  const size_t nf = a.shape()[0];
 
-  T m;
-  for (size_t i{ 1 }; i<n; i++) {
-    m = a[i-1] / b[i-1];
-    b[i] = b[i] - m*c[i-1];
-    d[i] = d[i] - m*d[i-1];
-  }
+  const T gamma = 10*b[0];
+  b[0] = b[0] - gamma;
+  b[nf-1] = b[nf-1] - alpha*beta/gamma;
+  xt::xarray<T> y = TDMAsolver(a, b, c, d);
 
-  std::vector<T> x( b );
-  x[n-1] = d[n-1] / b[n-1];
+  xt::xarray<T> u = xt::zeros<T>(nf);
+  u[0] = gamma;
+  u[nf-1] = alpha;
+  xt::xarray<T> q = TDMAsolver(a, b, c, u);
 
-  for (size_t i{ n-2 }; i>=0; i--) {
-    x[i] = (d[i] - c[i]*x[i+1]) / b[i];
-  }
+  xt::xarray<T> x = y - q*((y[0] + (beta/gamma)*y[nf-1]) /
+                           (1 + q[0] + (beta/gamma)*q[nf-1]));
 
   return x;
 }
 
 
 template <typename T>
-std::vector<T> TDMA_cyclic(
-    std::vector<T> a,
-    std::vector<T> b,
-    std::vector<T> c,
-    std::vector<T> d,
-    const T alpha, const T beta
+xt::xarray<T> TDMAsolver(
+    xt::xarray<T> a,
+    xt::xarray<T> b,
+    xt::xarray<T> c,
+    xt::xarray<T> d
     ) {
 
-  const size_t n = a.size();
+  const size_t nf = a.shape()[0];  // number of equations
 
-  const T gamma = 10*b[0];
-  b[0] = b[0] - gamma;
-  b[n-1] = b[n-1] - alpha*beta/gamma;
-  std::vector<T> y = TDMAsolver(a, b, c, d);
+  T m;
+  for (size_t i{ 1 }; i<nf; i++) {
+    m = a[i-1] / b[i-1];
+    b[i] = b[i] - m*c[i-1];
+    d[i] = d[i] - m*d[i-1];
+  }
 
-  std::vector<T> u(n, 0);
-  u[0] = gamma;
-  u[n-1] = alpha;
-  std::vector<T> q = TDMAsolver(a, b, c, u);
+  xt::xarray<T> x( b );
+  x[nf-1] = d[nf-1] / b[nf-1];
 
-  std::vector<T> x(n, 0);
-  for (size_t i{}; i<n; i++) {
-    x[i] = y[i] - q[i]*((y[0] + (beta/gamma)*y[n-1]) /
-                        (1 + q[0] + (beta/gamma)*q[n-1]));
+  for (size_t i{ nf-2 }; i>=0; i--) {
+    x[i] = (d[i] - c[i]*x[i+1]) / b[i];
   }
 
   return x;
@@ -378,6 +385,59 @@ xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx) {
   xt::view(q, nx+4, xt::all()) = xt::view(q, 5, xt::all());
 
   return q;
+}
+
+template <typename T>
+xt::xarray<T> c4ddp(xt::xarray<T> f, const size_T N, const T h) {
+  //
+  // 4th order compact scheme 2nd derivative periodic
+  //
+  // f_ = f minus repeating part (f[0] = f[-1])
+  //        plus last nonrepeating inserted at index 0 (f_[0] = f[-2])
+  // xt::xarray<T> f_   = xt::zeros<T>(f.shape());
+  // xt::view(f_, xt::range(1, N), xt::all()) = xt::view(f, xt::range(0, N-1), xt::all());
+  // xt::view(f_, 0, xt::all()) = xt::view(f, N-2, xt::all());
+  xt::xarray<T> f_ = xt::view(f, xt::range(0, N-1), xt::all());
+  xt::xarray<T> f_pp = xt::zeros<T>(f.shape());
+  // xt::xarray<T> r    = xt::zeros<T>(xt::view(f, xt::range(0, N-1), xt::all()).shape());
+  xt::xarray<T> r    = xt::zeros<T>(f_.shape());
+
+  xt::xarray<T> a = (1/10) * xt::ones<T>(r.shape());
+  xt::xarray<T> b =      1 * xt::ones<T>(r.shape());
+  xt::xarray<T> c = (1/10) * xt::ones<T>(r.shape());
+
+  xt::view(r, xt::range(1, N-2), xt::all()) = (6/5)*(1/pow(h, 2))*(
+        xt::view(f_, xt::range(2, N-1),   xt::all())  // i+1
+    - 2*xt::view(f_, xt::range(1, N-2), xt::all())  // i
+    +   xt::view(f_, xt::range(0, N-3), xt::all())  // i-1
+  );
+  xt::view(r, 0, xt::all()) = (6/5)*(1/pow(h, 2))*(
+        xt::view(f_, 1,   xt::all())  // i+1
+    - 2*xt::view(f_, 0,   xt::all())  // i
+    +   xt::view(f_, N-2, xt::all())  // i-1
+  );
+  xt::view(r, N-2, xt::all()) = (6/5)*(1/pow(h, 2))*(
+        xt::view(f_, 0,   xt::all())  // i+1
+    - 2*xt::view(f_, N-2, xt::all())  // i
+    +   xt::view(f_, N-3, xt::all())  // i-1
+  );
+
+  const T alpha = 1/10;
+  const T beta = 1/10;
+  const size_t dim = f.dimension();
+  const size_t ns = f.shape()[dim-1];
+  for (size_t n{}; n<ns; n++) {
+    xt::view(f_pp, xt::range(0, N-1), n) = TDMA_cyclic(
+      xt::view(a, xt::all(), n),
+      xt::view(b, xt::all(), n),
+      xt::view(c, xt::all(), n),
+      xt::view(r, xt::all(), n),
+      alpha, beta
+    );
+  }
+  xt::view(f_pp, N-1, xt::all()) = xt::view(f_pp, 0, xt::all());
+
+  return f_pp;
 }
 
 template <typename T>

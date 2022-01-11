@@ -105,4 +105,14 @@ int main() {
   auto dt = xt::nanmin<double>(cfl * dx / c_ip12);
   std::cout << (cfl * dx / c_ip12) << std::endl;
   std::cout << "dt = " << dt << std::endl;
+
+  xt::xarray<double> x = xt::arange(5);
+  std::cout << x << std::endl;
+  std::cout << xt::view(x, xt::range(0, 2)) << std::endl;
+  std::cout << xt::view(x, xt::range(1, 3)) << std::endl;
+  std::cout << xt::view(c_ip12, xt::all(), 0) << std::endl;
+
+  std::cout << "Shape: " << xt::adapt(c_ip12.shape()) << std::endl;
+  std::cout << "Dimension: " << c_ip12.dimension() << std::endl;
+  std::cout << "Shape[1]: " << c_ip12.shape()[1] << std::endl;
 }
