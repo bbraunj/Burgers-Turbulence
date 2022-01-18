@@ -1,5 +1,6 @@
 #include <cmath>
 #include <complex>
+#include <cstdio>
 #include <math.h>
 #include <iostream>
 #include <vector>
@@ -8,6 +9,7 @@
 #include <xtensor/xcomplex.hpp>
 #include <xtensor/xio.hpp>
 #include <xtensor/xrandom.hpp>
+#include <xtensor/xreducer.hpp>
 #include <xtensor/xview.hpp>
 #include <xtensor-fftw/basic.hpp>
 
@@ -102,17 +104,41 @@ int main() {
   std::cout << c_ip12 << std::endl;
 
   const double cfl = 0.5;
-  auto dt = xt::nanmin<double>(cfl * dx / c_ip12);
+  // auto dt_reducer1 = xt::nanmin(cfl * dx / c_ip12);
   std::cout << (cfl * dx / c_ip12) << std::endl;
-  std::cout << "dt = " << dt << std::endl;
+  std::cout << *xt::nanmin(cfl * dx / c_ip12).begin() << std::endl;
 
-  xt::xarray<double> x = xt::arange(5);
-  std::cout << x << std::endl;
-  std::cout << xt::view(x, xt::range(0, 2)) << std::endl;
-  std::cout << xt::view(x, xt::range(1, 3)) << std::endl;
-  std::cout << xt::view(c_ip12, xt::all(), 0) << std::endl;
+  xt::xarray<double> t = xt::ones<double>({3, 3})*1.5;
+  xt::xarray<double> t2 = xt::zeros<double>({3, 3});
+  xt::view(t2, xt::range(0, 2), xt::range(0, 2)) = 3.75 / xt::pow<2>(xt::view(t, xt::range(0, 2), xt::range(0, 2)));
+  std::cout << t << std::endl;
+  std::cout << t2 << std::endl;
+  // std::cout << 3.75 / xt::pow<2>(xt::view(t, xt::range(0, 2), xt::range(0, 2))) << std::endl;
+  std::cout << xt::pow(t, 2) << std::endl;
+  // std::cout << "type(dt) = " << typeid(dt_reducer).name() << std::endl;
+  // std::cout << "dt = " << dt << std::endl;
 
-  std::cout << "Shape: " << xt::adapt(c_ip12.shape()) << std::endl;
-  std::cout << "Dimension: " << c_ip12.dimension() << std::endl;
-  std::cout << "Shape[1]: " << c_ip12.shape()[1] << std::endl;
+  // xt::xarray<double> x = xt::arange(5);
+  // std::cout << x << std::endl;
+  // std::cout << xt::view(x, xt::range(0, 2)) << std::endl;
+  // std::cout << xt::view(x, xt::range(1, 3)) << std::endl;
+  // std::cout << xt::view(c_ip12, xt::all(), 0) << std::endl;
+
+  // std::cout << "Shape: " << xt::adapt(c_ip12.shape()) << std::endl;
+  // std::cout << "Dimension: " << c_ip12.dimension() << std::endl;
+  // std::cout << "Shape[1]: " << c_ip12.shape()[1] << std::endl;
+
+  int sum{};
+  for (size_t i{ 5 }; i>0; i--) {
+    sum += i;
+    printf("%d\n", i);
+  }
+  printf("sum: %d\n", s);
+
+  xt::xarray<double> b0 = xt::zeros<double>({5, 5});
+  xt::xarray<double> a0 = xt::zeros<double>({3, 5});
+  xt::view(b0, xt::range(1, 4), xt::range(1, 4)) = 0.5;
+  a0 = 0.1 / xt::square(xt::view(b0, xt::range(1, 4), xt::all()) + 1e-5);
+  std::cout << "b0: " << b0 << std::endl;
+  std::cout << "a0: " << a0 << std::endl;
 }

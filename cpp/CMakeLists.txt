@@ -17,8 +17,11 @@ pkg_search_module(FFTW3 REQUIRED fftw3 IMPORTED_TARGET)
 include_directories(PkgConfig::FFTW3)
 link_libraries(PkgConfig::FFTW3)
 
-# add_executable(main main.cpp)
-# target_link_libraries(main xtensor xtensor::optimize)
+pkg_search_module(gperftools REQUIRED libprofiler IMPORTED_TARGET)
+link_libraries(PkgConfig::gperftools)
 
-add_executable(test test.cpp)
-target_link_libraries(test xtensor xtensor::optimize PkgConfig::FFTW3)
+add_executable(main main.cpp)
+target_link_libraries(main xtensor xtensor::optimize PkgConfig::FFTW3 PkgConfig::gperftools)
+
+# add_executable(test test.cpp)
+# target_link_libraries(test xtensor xtensor::optimize PkgConfig::FFTW3)
