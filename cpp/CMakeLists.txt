@@ -7,9 +7,6 @@ set(FFTW_USE_DOUBLE ON)
 # link_directories(/opt/homebrew/Cellar/fftw/3.3.10/lib)
 
 # include(/opt/homebrew/Cellar/fftw/3.3.10/lib/cmake/fftw3/FFTW3Config.cmake)
-find_package(xtl REQUIRED)
-find_package(xtensor REQUIRED)
-find_package(xtensor-fftw REQUIRED)
 # find_package(FFTW3 REQUIRED)
 find_package(PkgConfig REQUIRED)
 
@@ -21,7 +18,7 @@ pkg_search_module(gperftools REQUIRED libprofiler IMPORTED_TARGET)
 link_libraries(PkgConfig::gperftools)
 
 add_executable(main main.cpp)
-target_link_libraries(main xtensor xtensor::optimize PkgConfig::FFTW3 PkgConfig::gperftools)
+target_link_libraries(main PkgConfig::FFTW3 PkgConfig::gperftools)
 
 # add_executable(test test.cpp)
 # target_link_libraries(test xtensor xtensor::optimize PkgConfig::FFTW3)
