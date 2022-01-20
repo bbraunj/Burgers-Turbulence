@@ -1,17 +1,16 @@
+#define EIGEN_FFTW_DEFAULT
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
+#include <Eigen/Dense>
+#include <unsupported/Eigen/FFT>
 #include <math.h>
+#include <iomanip>
 #include <iostream>
 #include <vector>
-#include <xtensor/xadapt.hpp>
-#include <xtensor/xarray.hpp>
-#include <xtensor/xcomplex.hpp>
-#include <xtensor/xio.hpp>
-#include <xtensor/xrandom.hpp>
-#include <xtensor/xreducer.hpp>
-#include <xtensor/xview.hpp>
-#include <xtensor-fftw/basic.hpp>
+
+using namespace Eigen;
 
 const double pi{ 3.1415926535897 };
 const size_t nx{ 10 };
@@ -21,124 +20,102 @@ const double dx{ lx / nx };
 
 using namespace std::literals::complex_literals;
 
+ArrayXXd perbc(ArrayXXd q, const size_t nx);
+
+std::chrono::nanoseconds dummy_time;
+struct Stopwatch {
+  Stopwatch(std::chrono::nanoseconds& result)
+    : name{ "No_name" },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name, std::chrono::nanoseconds& result)
+    : name{ name },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name)
+    : name{ name },
+    result{ dummy_time },
+    start{ std::chrono::high_resolution_clock::now() } { }
+
+  ~Stopwatch() {
+    result = std::chrono::high_resolution_clock::now() - start;
+    std::cout << "-[" << name << "] Ended. Elapsed Time: " <<
+      std::setprecision(4) << result.count()/1e6 << " ms" << std::endl;
+  }
+private:
+  const std::string name;
+  std::chrono::nanoseconds& result;
+  const std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
+
+
 int main() {
-//   using xarray = xt::xarray<double>;
-  // xt::xarray<double> s = xt::arange<double>(0, nx);
-  // xt::xarray<double> b = xt::arange<double>(0, nx);
-  // s.reshape({1, nx});
-  // b.reshape({1, nx});
-  // for (size_t i{ 1 }; i<ns; i++) {
-  //     s = xt::concatenate(xt::xtuple(s, b));
-  // }
-  // std::cout << xt::adapt(s.shape()) << std::endl;
-  // std::cout << s << std::endl;
-
-//   xt::xarray<double> s2 = xt::zeros<double>({nx, ns});
-//   for (size_t i{}; i<nx; i++) {
-//       xt::view(s2, i, xt::all()) = xt::ones<double>({ns})*i;
-//   }
-//   std::cout << xt::adapt(s2.shape()) << std::endl;
-//   std::cout << s2 << std::endl;
-
-//   xarray r = xt::random::rand<double>({nx, ns});
-//   std::cout << xt::adapt(r.shape()) << std::endl;
-//   std::cout << r << std::endl;
-
-  using xarray = xt::xarray<double>;
   // nx+5 because 2 ghost points at lhs of domain, 3 ghost points at rhs of domain
-  xarray q = xt::zeros<double>({nx+5, ns});
+  ArrayXXd q = ArrayXXd::Zero(nx+5, ns);
   double lx = nx*dx;
 
   // Wave numbers
-  xarray s = xt::zeros<double>({nx/2, ns});
+  ArrayXXd s = ArrayXXd::Zero(nx/2, ns);
   for (size_t i{}; i<nx/2; i++) {
-    xt::view(s, i, xt::all()) = xt::ones<double>({ns})*i;
+    s(i, all) = ArrayXXd::Ones(1, ns)*i;
   }
 
-  xarray kx = xt::zeros<double>({nx+5, ns});
-  xt::view(kx, xt::range(2, (nx/2 + 2)), xt::all())        = 2*pi*s / lx;
-  xt::view(kx, xt::range((nx/2 + 2), (nx + 2)), xt::all()) = 2*pi*(s - nx/2) / lx;
+  ArrayXXd kx = ArrayXXd::Zero(nx+5, ns);
+  kx(seqN(2, nx/2), all)      = 2*pi*s / lx;
+  kx(seqN(nx/2+2, nx/2), all) = 2*pi*(s - nx/2) / lx;
 
   // Initial energy spectrum in wavenumber space
-  const size_t k0 = 10;
-  auto A = ( 2 / (3*sqrt(pi)) ) * pow(k0, -5);
-  xarray E_k = A*xt::pow(kx, 4) * xt::exp(-xt::pow(kx/k0, 2));
+  const double k0 = 10.;
+  const double A = ( 2. / (3.*sqrt(pi)) ) * pow(k0, -5);
+  ArrayXXd E_k = A*pow(kx, 4) * exp(-pow(kx/k0, 2));
 
   // Velocity in Fourier space
-  xarray r = xt::random::rand<double>({nx, ns});
-  xt::view(r, xt::range(0, nx/2), xt::all()) = -xt::view(r, xt::range(0, nx/2), xt::all());
-  xt::xarray<std::complex<double>> u_k = xt::sqrt(2*xt::view(E_k, xt::range(2, nx+2), xt::all()))
-                                       * xt::exp(2.0i * pi * r);
+  ArrayXXd r = ArrayXXd::Random(nx, ns);
+  r(seq(0, nx/2), all) = -r(seq(0, nx/2), all);
+
+  ArrayXXcd u_k = sqrt(2.*E_k(seqN(2, nx), all)) * exp(2.0i * pi * r);
 
   // Velocity in physical space
-  xarray u = xt::zeros<double>({nx, ns});
+  ArrayXXd u = ArrayXXd::Zero(nx, ns);
+  FFT<double> fft{};
+  Eigen::VectorXcd u_i;
   for (size_t i{}; i<ns; i++) {
-    xt::xarray<std::complex<double>> u_ki = xt::view(u_k, xt::all(), i);
-    xt::view(u, xt::all(), i) = xt::real(xt::fftw::fft(u_ki));
+    Eigen::VectorXcd u_ki = u_k.col(i);
+    fft.fwd(u_i, u_ki);
+    u.col(i) = u_i.real();
   }
-
-  xt::view(q, xt::range(2, nx+2), xt::all()) = u;
-//   q = perbc(q, nx);
-
-//   std::cout << xt::adapt(u.shape()) << std::endl;
-  std::cout << "s:\n" << s << std::endl;
-  std::cout << "kx:\n" << kx << std::endl;
-  std::cout << "E_k:\n" << std::scientific << E_k << std::endl;
-  std::cout << "u_k:\n" << u_k << std::endl;
   std::cout << "u:\n" << u << std::endl;
-  std::cout << "q:\n" << q << std::endl;
+  std::cout << "u.maxCoeff(): " << u.maxCoeff() << std::endl;
 
-  xarray c_ip12 = xt::zeros<double>(q.shape());
-  xarray test = xt::vstack(xt::xtuple(
-    xarray(xt::view(q, xt::range(0, nx), xt::all())),
-    xarray(xt::view(q, xt::range(1, nx+1), xt::all())),
-    xarray(xt::view(q, xt::range(2, nx+2), xt::all())),
-    xarray(xt::view(q, xt::range(3, nx+3), xt::all())),
-    xarray(xt::view(q, xt::range(4, nx+4), xt::all())),
-    xarray(xt::view(q, xt::range(5, nx+5), xt::all()))
-  ));
-  xt::view(c_ip12, xt::range(2, nx+2), xt::all()) = xt::amax(test, {0});
-  std::cout << "test" << xt::adapt(test.shape()) << std::endl;
-  std::cout << test << std::endl;
-  std::cout << "c_ip12" << xt::adapt(c_ip12.shape()) << std::endl;
-  std::cout << c_ip12 << std::endl;
+  q(seqN(2, nx), all) = u;
+  q = perbc(q, nx);
+
+  ArrayXXd c_ip12 = ArrayXXd::Zero(q.rows(), q.cols());
+  for (size_t s{}; s<q.cols(); s++) {
+    for (size_t i{ 2 }; i<nx+2; i++) {
+      c_ip12(i, s) = abs(q)(seq(i-2, i+3), s).maxCoeff();
+    }
+  }
+  std::cout << "c_ip12:\n" << c_ip12 << std::endl;
 
   const double cfl = 0.5;
-  // auto dt_reducer1 = xt::nanmin(cfl * dx / c_ip12);
-  std::cout << (cfl * dx / c_ip12) << std::endl;
-  std::cout << *xt::nanmin(cfl * dx / c_ip12).begin() << std::endl;
+  std::cout << "cfl * dx / c_ip12:\n" << (cfl * dx / c_ip12) << std::endl;
+  std::cout << "dt: " << (cfl * dx / c_ip12).minCoeff() << std::endl;
 
-  xt::xarray<double> t = xt::ones<double>({3, 3})*1.5;
-  xt::xarray<double> t2 = xt::zeros<double>({3, 3});
-  xt::view(t2, xt::range(0, 2), xt::range(0, 2)) = 3.75 / xt::pow<2>(xt::view(t, xt::range(0, 2), xt::range(0, 2)));
-  std::cout << t << std::endl;
-  std::cout << t2 << std::endl;
-  // std::cout << 3.75 / xt::pow<2>(xt::view(t, xt::range(0, 2), xt::range(0, 2))) << std::endl;
-  std::cout << xt::pow(t, 2) << std::endl;
-  // std::cout << "type(dt) = " << typeid(dt_reducer).name() << std::endl;
-  // std::cout << "dt = " << dt << std::endl;
-
-  // xt::xarray<double> x = xt::arange(5);
-  // std::cout << x << std::endl;
-  // std::cout << xt::view(x, xt::range(0, 2)) << std::endl;
-  // std::cout << xt::view(x, xt::range(1, 3)) << std::endl;
-  // std::cout << xt::view(c_ip12, xt::all(), 0) << std::endl;
-
-  // std::cout << "Shape: " << xt::adapt(c_ip12.shape()) << std::endl;
-  // std::cout << "Dimension: " << c_ip12.dimension() << std::endl;
-  // std::cout << "Shape[1]: " << c_ip12.shape()[1] << std::endl;
-
-  int sum{};
-  for (size_t i{ 5 }; i>0; i--) {
-    sum += i;
-    printf("%d\n", i);
+  std::cout << "q:\n" << q << std::endl;
+  auto i = ArrayXi::LinSpaced(3, 0, 3);
+  for (size_t n{}; n<(q.rows()-3); n++) {
+    std::cout << "q[" << n << ":" << n+3 << ", :]:\n" << q(i+n, all) << std::endl;
   }
-  printf("sum: %d\n", s);
+}
 
-  xt::xarray<double> b0 = xt::zeros<double>({5, 5});
-  xt::xarray<double> a0 = xt::zeros<double>({3, 5});
-  xt::view(b0, xt::range(1, 4), xt::range(1, 4)) = 0.5;
-  a0 = 0.1 / xt::square(xt::view(b0, xt::range(1, 4), xt::all()) + 1e-5);
-  std::cout << "b0: " << b0 << std::endl;
-  std::cout << "a0: " << a0 << std::endl;
+ArrayXXd perbc(ArrayXXd q, const size_t nx) {
+  q.row(2) = q.row(nx+1);
+  q.row(1) = q.row(nx);
+  q.row(0) = q.row(nx-1);
+  q.row(nx+2) = q.row(3);
+  q.row(nx+3) = q.row(4);
+  q.row(nx+4) = q.row(5);
+
+  return q;
 }

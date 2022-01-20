@@ -1,4 +1,4 @@
-#include <boost/program_options.hpp>
+#define EIGEN_FFTW_DEFAULT
 #include <chrono>
 #include <cmath>
 #include <complex>
@@ -6,13 +6,10 @@
 #include <iostream>
 #include <math.h>
 #include <utility>
-#include <xtensor/xarray.hpp>
-#include <xtensor/xcomplex.hpp>
-#include <xtensor/xio.hpp>
-#include <xtensor/xmath.hpp>
-#include <xtensor/xrandom.hpp>
-#include <xtensor/xview.hpp>
-#include <xtensor-fftw/basic.hpp>
+#include <Eigen/Dense>
+#include <unsupported/Eigen/FFT>
+
+using namespace Eigen;
 
 
 // Function declarations
@@ -20,44 +17,38 @@
 template <typename T>
 void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
 template <typename T>
-xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt, const T nu);
+ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu);
 template <typename T>
-xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu);
-template <typename T>
-xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
-                              xt::xarray<T> FL,
-                              xt::xarray<T> qR_ip12,
-                              xt::xarray<T> qL_ip12,
-                              xt::xarray<T> c_ip12);
-template <typename T>
-xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx);
+ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu);
+ArrayXXd rusanov_riemann(ArrayXXd FR,
+                         ArrayXXd FL,
+                         ArrayXXd qR_ip12,
+                         ArrayXXd qL_ip12,
+                         ArrayXXd c_ip12);
+ArrayXXd perbc(ArrayXXd q, const size_t nx);
 
 // Reconstruction Scheme
-template <typename T>
-std::tuple<xt::xarray<T>, xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx);
+std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx);
 
 // Viscous Contribution
 template <typename T>
-xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h);
+ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h);
 template <typename T>
-xt::xarray<T> TDMA_cyclic(xt::xarray<T> a, xt::xarray<T> b, xt::xarray<T> c, xt::xarray<T> d, const T alpha, const T beta);
-template <typename T>
-xt::xarray<T> TDMAsolver(xt::xarray<T> a, xt::xarray<T> b, xt::xarray<T> c, xt::xarray<T> d);
+ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta);
+ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d);
 
 // Problem Quantities
 template <typename T>
-xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx);
+ArrayXXd get_IC_q(const size_t ns, const size_t nx, const T dx);
 template <typename T>
-T get_dt(xt::xarray<T> q, const size_t nx, const T dx);
-template <typename T>
-xt::xarray<T> get_wave_speeds(xt::xarray<T> q, const size_t nx);
-template <typename T>
-xt::xarray<T> get_flux(xt::xarray<T> q);
+T get_dt(ArrayXXd q, const size_t nx, const T dx);
+ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx);
+ArrayXXd get_flux(ArrayXXd q);
 // ---------------------
 
 const double pi{ 3.1415926535897 };
-std::chrono::nanoseconds dummy_time;
 
+std::chrono::nanoseconds dummy_time;
 struct Stopwatch {
   Stopwatch(std::chrono::nanoseconds& result)
     : name{ "No_name" },
@@ -107,7 +98,7 @@ template <typename T>
 void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
   const T lx{ 2*pi };
   const T dx{ lx / nx };
-  xt::xarray<T> q = get_IC_q(ns, nx, dx);
+  ArrayXXd q = get_IC_q(ns, nx, dx);
   T time{ 0 };
 
   size_t n_iterations{};
@@ -137,34 +128,23 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
 
 
 template <typename T>
-xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt, const T nu) {
+ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu) {
   Stopwatch stopwatch{ "TVDRK3" };
   // 3rd Order Runge-Kutta time integrator.
   // std::cout << "tvdrk3:" << std::endl;
-  xt::xarray<T> q1( q_n );
-  auto i = xt::range(3, nx+2);
-  xt::view(q1, i, xt::all()) = (
-    xt::view(q_n, i, xt::all()) +
-    dt * rhs(q_n, nx, dx, nu)
-  );
+  ArrayXXd q1( q_n );
+  auto i = ArrayXi::LinSpaced(nx-1, 3, nx+2);
+  q1(i, all) = q_n(i, all) + dt*rhs(q_n, nx, dx, nu);
   // std::cout << "* q1: " << q1(5, 0) << std::endl;
   q1 = perbc(q1, nx);
 
-  xt::xarray<T> q2( q_n );
-  xt::view(q2, i, xt::all()) = (
-    0.75 * xt::view(q_n, i, xt::all()) +
-    0.25 * xt::view(q1,  i, xt::all()) +
-    0.25 * dt * rhs(q1, nx, dx, nu)
-  );
+  ArrayXXd q2( q_n );
+  q2(i, all) = 0.75*q_n(i, all) + 0.25*q1(i, all) + 0.25*dt*rhs(q1, nx, dx, nu);
   // std::cout << "* q2: " << q2(5, 0) << std::endl;
   q2 = perbc(q2, nx);
 
-  xt::xarray<T> q_np1( q_n );
-  xt::view(q_np1, i, xt::all()) = (
-    (1./3) * xt::view(q_n, i, xt::all()) +
-    (2./3) * xt::view(q2,  i, xt::all()) +
-    (2./3) * dt * rhs(q2, nx, dx, nu)
-  );
+  ArrayXXd q_np1( q_n );
+  q_np1(i, all) = (1./3)*q_n(i, all) + (2./3)*q2(i, all) + (2./3)*dt*rhs(q2, nx, dx, nu);
   // std::cout << "* q_np1: " << q_np1(5, 0) << std::endl;
   q_np1 = perbc(q_np1, nx);
 
@@ -173,7 +153,7 @@ xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt,
 
 
 template <typename T>
-xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu) {
+ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu) {
   // Note:
   //   q.shape() == {nx+5, ns}
   //                 ^^^^ Specifically from 0:(nx+5)
@@ -185,157 +165,98 @@ xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu) {
   auto [qL_ip12, qR_ip12] = weno_5(q, nx);
   // xt::xarray<T> [qL_ip12, qR_ip12] = weno_5(q, nx);
 
-  xt::xarray<T> c_ip12 = get_wave_speeds(q, nx);
-  xt::xarray<T> FR = get_flux(qR_ip12);
-  xt::xarray<T> FL = get_flux(qL_ip12);
+  ArrayXXd c_ip12 = get_wave_speeds(q, nx);
+  ArrayXXd FR = get_flux(qR_ip12);
+  ArrayXXd FL = get_flux(qL_ip12);
   // std::cout << "  + FL: " << FL(5, 0) << std::endl;
   // std::cout << "  + FR: " << FR(5, 0) << std::endl;
 
   // Riemann Solvers
-  xt::xarray<T> F_ip12 = rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12);
+  ArrayXXd F_ip12 = rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12);
   // std::cout << "  + F_ip12: " << F_ip12(5, 0) << std::endl;
 
-  xt::xarray<T> rhs = -(
-      xt::view(F_ip12, xt::range(3, nx+2), xt::all())  // F_ip12
-    - xt::view(F_ip12, xt::range(2, nx+1), xt::all())  // F_im12
-  ) / dx;
+  auto i = ArrayXi::LinSpaced(nx-1, 1, nx) + 2;
+  ArrayXXd rhs = -(F_ip12(i, all) - F_ip12(i-1, all)) / dx;
+  //               F_ip12           F_im12
 
   // Viscous contribution
-  xt::xarray<T> uxx = c4ddp(
-    static_cast<xt::xarray<T>>(xt::view(q, xt::range(2, nx+3), xt::all())),
-    nx+1, dx
-  );
+  ArrayXXd uxx = c4ddp(q(seq(2, nx+3), all), nx+1, dx);  // 0 <= x <= nx+1
   // std::cout << "  + uxx: " << uxx(5, 0) << std::endl;
 
+  rhs += nu*uxx(seq(1, nx), all);
   // rhs += nu*xt::view(uxx, xt::range(1, nx), xt::all());
 
   return rhs;
 }
 
-template <typename T>
-xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
-                              xt::xarray<T> FL,
-                              xt::xarray<T> qR_ip12,
-                              xt::xarray<T> qL_ip12,
-                              xt::xarray<T> c_ip12) {
-  xt::xarray<T> F_ip12 = 0.5*((FR + FL) - c_ip12*(qR_ip12 - qL_ip12));
+ArrayXXd rusanov_riemann(ArrayXXd FR,
+                         ArrayXXd FL,
+                         ArrayXXd qR_ip12,
+                         ArrayXXd qL_ip12,
+                         ArrayXXd c_ip12) {
+  ArrayXXd F_ip12 = 0.5*((FR + FL) - c_ip12*(qR_ip12 - qL_ip12));
 
   return F_ip12;
 }
 
-template <typename T>
-std::tuple<xt::xarray<T>, xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx) {
+std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
   Stopwatch stopwatch{ "WENO-5" };
-  const auto q_shape = q.shape();
-  const auto domain_shape = {q.shape()[0]-5, q.shape()[1]};
-  xt::xarray<T> b0      = xt::zeros<T>(q_shape);
-  xt::xarray<T> b1      = xt::zeros<T>(q_shape);
-  xt::xarray<T> b2      = xt::zeros<T>(q_shape);
+  const size_t ns = q.cols();
+  // const auto domain_shape = {q.shape()[0]-5, q.shape()[1]};
+  ArrayXXd b0      = ArrayXXd::Zero(nx+5, ns);
+  ArrayXXd b1      = ArrayXXd::Zero(nx+5, ns);
+  ArrayXXd b2      = ArrayXXd::Zero(nx+5, ns);
 
-  xt::xarray<T> a0      = xt::zeros<T>(domain_shape);
-  xt::xarray<T> a1      = xt::zeros<T>(domain_shape);
-  xt::xarray<T> a2      = xt::zeros<T>(domain_shape);
-
-  xt::xarray<T> w0      = xt::zeros<T>(domain_shape);
-  xt::xarray<T> w1      = xt::zeros<T>(domain_shape);
-  xt::xarray<T> w2      = xt::zeros<T>(domain_shape);
-
-  xt::xarray<T> qL_ip12 = xt::zeros<T>(q_shape);
-  xt::xarray<T> qR_ip12 = xt::zeros<T>(q_shape);
+  ArrayXXd qL_ip12 = ArrayXXd::Zero(nx+5, ns);
+  ArrayXXd qR_ip12 = ArrayXXd::Zero(nx+5, ns);
 
   // Linear weighting coefficients
-  T d0 = 1./10;
-  T d1 = 6./10;
-  T d2 = 3./10;
-  T eps = 1e-6;
+  double d0 = 1./10;
+  double d1 = 6./10;
+  double d2 = 3./10;
+  double eps = 1e-6;
 
   // Smoothness indicators
-  xt::view(b0, xt::range(2, nx+3), xt::all()) = (
-    (13./12)*xt::square((    xt::view(q, xt::range(0, nx+1), xt::all())  // i-2
-                         - 2*xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
-                         +   xt::view(q, xt::range(2, nx+3), xt::all())  // i
-                        ))
-    + (1./4)*xt::square((    xt::view(q, xt::range(0, nx+1), xt::all())  // i-2
-                         - 4*xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
-                         + 3*xt::view(q, xt::range(2, nx+3), xt::all())  // i
-                        ))
-  );
-  xt::view(b1, xt::range(2, nx+3), xt::all()) = (
-    (13./12)*xt::square((    xt::view(q, xt::range(1, nx+2), xt::all())  // i-1
-                         - 2*xt::view(q, xt::range(2, nx+3), xt::all())  // i
-                         +   xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
-                         ))
-    + (1./4)*xt::square((  xt::view(q, xt::range(0, nx+1), xt::all())    // i-1
-                         - xt::view(q, xt::range(2, nx+3), xt::all())    // i+1
-                        ))
-  );
-  xt::view(b2, xt::range(2, nx+3), xt::all()) = (
-    (13./12)*xt::square((    xt::view(q, xt::range(2, nx+3), xt::all())  // i
-                         - 2*xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
-                         +   xt::view(q, xt::range(4, nx+5), xt::all())  // i+2
-                        ))
-    + (1./4)*xt::square((  3*xt::view(q, xt::range(2, nx+3), xt::all())  // i
-                         - 4*xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
-                         +   xt::view(q, xt::range(4, nx+5), xt::all())  // i+2
-                        ))
-  );
+  auto i = ArrayXi::LinSpaced(nx+1, 0, nx+1) + 2;
+  b0(i, all) = ((13./12)*pow(q(i-2, all) - 2*q(i-1, all) +   q(i, all), 2)
+                + (1./4)*pow(q(i-2, all) - 4*q(i-1, all) + 3*q(i, all), 2));
+  b1(i, all) = ((13./12)*pow(q(i-1, all) - 2*q(i, all) + q(i+1, all), 2)
+                + (1./4)*pow(q(i-1, all)               - q(i+1, all), 2));
+  b2(i, all) = ((13./12)*pow(  q(i, all) - 2*q(i+1, all) + q(i+2, all), 2)
+                + (1./4)*pow(3*q(i, all) - 4*q(i+1, all) + q(i+2, all), 2));
 
   // Nonlinear weights
   // const auto i = xt::range(2, nx+2);
-  a0 = d0 / xt::square(xt::view(b0, xt::range(2, nx+2), xt::all()) + 1e-6);
-  a1 = d1 / xt::square(xt::view(b1, xt::range(2, nx+2), xt::all()) + 1e-6);
-  a2 = d2 / xt::square(xt::view(b2, xt::range(2, nx+2), xt::all()) + 1e-6);
+  auto i2 = ArrayXi::LinSpaced(nx, 0, nx) + 2;
+  ArrayXXd a0 = d0 / pow(b0(i2, all) + eps, 2);
+  ArrayXXd a1 = d1 / pow(b1(i2, all) + eps, 2);
+  ArrayXXd a2 = d2 / pow(b2(i2, all) + eps, 2);
 
-  xt::xarray<T> a_sum = (a0 + a1 + a2);
-  w0 = a0 / a_sum;
-  w1 = a1 / a_sum;
-  w2 = a2 / a_sum;
+  ArrayXXd w0 = a0 / (a0 + a1 + a2);
+  ArrayXXd w1 = a1 / (a0 + a1 + a2);
+  ArrayXXd w2 = a2 / (a0 + a1 + a2);
 
   // Positive reconstruction @ i+1/2
-  xt::xarray<T> q0 = (
-       2.*xt::view(q, xt::range(0, nx),   xt::all())  // i-2
-    -  7.*xt::view(q, xt::range(1, nx+1), xt::all())  // i-1
-    + 11.*xt::view(q, xt::range(2, nx+2), xt::all())  // i
-  );
-  xt::xarray<T> q1 = (
-        -xt::view(q, xt::range(1, nx+1), xt::all())   // i-1
-    + 5.*xt::view(q, xt::range(2, nx+2), xt::all())   // i
-    + 2.*xt::view(q, xt::range(3, nx+3), xt::all())   // i+1
-  );
-  xt::xarray<T> q2 = (
-      2.*xt::view(q, xt::range(2, nx+2), xt::all())   // i
-    + 5.*xt::view(q, xt::range(3, nx+3), xt::all())   // i+1
-    -    xt::view(q, xt::range(4, nx+4), xt::all())   // i+2
-  );
-  xt::view(qL_ip12, xt::range(2, nx+2), xt::all()) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
+  ArrayXXd q0 = 2*q(i2-2, all) - 7*q(i2-1, all) + 11*q(i2, all);
+  ArrayXXd q1 =  -q(i2-1, all) + 5*q(i2, all)   +  2*q(i2+1, all);
+  ArrayXXd q2 = 2*q(i2, all)   + 5*q(i2+1, all) -    q(i2+2, all);
+  qL_ip12(i2, all) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
 
   // Negative reconstruction @ i-1/2 + 1 (so i+1/2)
   // const auto i2 = xt::range(3, nx+3);
-  a0 = d0 / xt::square(xt::view(b0, xt::range(3, nx+3), xt::all()) + eps);
-  a1 = d1 / xt::square(xt::view(b1, xt::range(3, nx+3), xt::all()) + eps);
-  a2 = d2 / xt::square(xt::view(b2, xt::range(3, nx+3), xt::all()) + eps);
+  auto i3 = ArrayXi::LinSpaced(nx, 0, nx) + 3;
+  a0 = d0 / pow(b0(i3, all) + eps, 2);
+  a1 = d1 / pow(b1(i3, all) + eps, 2);
+  a2 = d2 / pow(b2(i3, all) + eps, 2);
 
-  a_sum = (a0 + a1 + a2);
-  w0 = a0 / a_sum;
-  w1 = a1 / a_sum;
-  w2 = a2 / a_sum;
+  w0 = a0 / (a0 + a1 + a2);
+  w1 = a1 / (a0 + a1 + a2);
+  w2 = a2 / (a0 + a1 + a2);
 
-  q0 = (
-       2.*xt::view(q, xt::range(4, nx+4), xt::all())  // i2+2
-    -  7.*xt::view(q, xt::range(3, nx+3), xt::all())  // i2+1
-    + 11.*xt::view(q, xt::range(2, nx+2), xt::all())  // i2
-  );
-  q1 = (
-        -xt::view(q, xt::range(3, nx+3), xt::all())   // i2+1
-    + 5.*xt::view(q, xt::range(2, nx+2), xt::all())   // i2
-    + 2.*xt::view(q, xt::range(1, nx+1), xt::all())   // i2-1
-  );
-  q2 = (
-      2.*xt::view(q, xt::range(2, nx+2), xt::all())   // i2
-    + 5.*xt::view(q, xt::range(1, nx+1), xt::all())   // i2-1
-    -    xt::view(q, xt::range(0, nx),   xt::all())   // i2-2
-  );
-  xt::view(qR_ip12, xt::range(2, nx+2), xt::all()) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
+  q0 = 2*q(i3+2, all) - 7*q(i3+1, all) + 11*q(i3, all);
+  q1 =  -q(i3+1, all) + 5*q(i3, all)   +  2*q(i3-1, all);
+  q2 = 2*q(i3, all)   + 5*q(i3-1, all) -    q(i3-2, all);
+  qR_ip12(i3-1, all) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
 
   // std::pair<xt::xarray<T>, xt::xarray<T>> p(qL_ip12, qR_ip12);
   // std::cout << "  + qL_ip12: " << qL_ip12(5, 0) << std::endl;
@@ -345,119 +266,108 @@ std::tuple<xt::xarray<T>, xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx
 
 
 template <typename T>
-xt::xarray<T> TDMA_cyclic(
-    xt::xarray<T> a,
-    xt::xarray<T> b,
-    xt::xarray<T> c,
-    xt::xarray<T> d,
-    const T alpha, const T beta
-    ) {
+ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta) {
 
-  const size_t nf = a.shape()[0];
+  const size_t nf = a.rows();
 
-  const T gamma = 10.*b[0];
-  b[0] = b[0] - gamma;
-  b[nf-1] = b[nf-1] - alpha*beta/gamma;
-  xt::xarray<T> y = TDMAsolver(a, b, c, d);
+  const T gamma = 10.*b(0);
+  b(0) = b(0) - gamma;
+  b(nf-1) = b(nf-1) - alpha*beta/gamma;
+  ArrayXd y = TDMAsolver(a, b, c, d);
 
-  xt::xarray<T> u = xt::zeros<T>({nf});
-  u[0] = gamma;
-  u[nf-1] = alpha;
-  xt::xarray<T> q = TDMAsolver(a, b, c, u);
+  ArrayXd u = ArrayXd::Zero(nf);
+  u(0) = gamma;
+  u(nf-1) = alpha;
+  ArrayXd q = TDMAsolver(a, b, c, u);
 
-  xt::xarray<T> x = y - q*((y[0] + (beta/gamma)*y[nf-1]) /
-                           (1 + q[0] + (beta/gamma)*q[nf-1]));
+  ArrayXd x = y - q*((y(0) + (beta/gamma)*y(nf-1)) /
+                     (1 + q(0) + (beta/gamma)*q(nf-1)));
 
   return x;
 }
 
 
-template <typename T>
-xt::xarray<T> TDMAsolver(
-    xt::xarray<T> a,
-    xt::xarray<T> b,
-    xt::xarray<T> c,
-    xt::xarray<T> d
-    ) {
+ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d) {
 
-  const size_t nf = a.shape()[0];  // number of equations
+  const size_t nf = a.rows();  // number of equations
 
-  T m;
+  double m;
   for (size_t i{ 1 }; i<nf; i++) {
-    m = a[i-1] / b[i-1];
-    b[i] = b[i] - m*c[i-1];
-    d[i] = d[i] - m*d[i-1];
+    m = a(i-1) / b(i-1);
+    b(i) = b(i) - m*c(i-1);
+    d(i) = d(i) - m*d(i-1);
   }
 
-  xt::xarray<T> x( b );
-  x[nf-1] = d[nf-1] / b[nf-1];
+  ArrayXd x( b );
+  x(nf-1) = d(nf-1) / b(nf-1);
 
   for (size_t i{ nf-2 }; i>0; i--) {
-    x[i] = (d[i] - c[i]*x[i+1]) / b[i];
+    x(i) = (d(i) - c(i)*x(i+1)) / b(i);
   }
-  x[0] = (d[0] - c[0]*x[1]) / b[0];  // Doing i=0 in the for loop isn't working for some reason.
+  x(0) = (d(0) - c(0)*x(1)) / b(0);  // Doing i=0 in the for loop isn't working for some reason.
 
   return x;
 }
 
 
 template <typename T>
-xt::xarray<T> get_IC_q(const size_t ns, const size_t nx, const T dx) {
-  using xarray = xt::xarray<T>;
+ArrayXXd get_IC_q(const size_t ns, const size_t nx, const T dx) {
   using namespace std::literals::complex_literals;
 
   // nx+5 because 2 ghost points at lhs of domain, 3 ghost points at rhs of domain
-  xarray q = xt::zeros<T>({nx+5, ns});
-  T lx = nx*dx;
+  ArrayXXd q = ArrayXXd::Zero(nx+5, ns);
+  double lx = nx*dx;
 
   // Wave numbers
-  xarray s = xt::zeros<T>({nx/2, ns});
+  ArrayXXd s = ArrayXXd::Zero(nx/2, ns);
   for (size_t i{}; i<nx/2; i++) {
-    xt::view(s, i, xt::all()) = xt::ones<T>({ns})*i;
+    s(i, all) = ArrayXXd::Ones(1, ns)*i;
   }
 
-  xarray kx = xt::zeros<T>({nx+5, ns});
-  xt::view(kx, xt::range(2, (nx/2 + 2)), xt::all())        = 2*pi*s / lx;
-  xt::view(kx, xt::range((nx/2 + 2), (nx + 2)), xt::all()) = 2*pi*(s - nx/2) / lx;
+  ArrayXXd kx = ArrayXXd::Zero(nx+5, ns);
+  kx(seqN(2, nx/2), all)      = 2*pi*s / lx;
+  kx(seqN(nx/2+2, nx/2), all) = 2*pi*(s - nx/2) / lx;
 
   // Initial energy spectrum in wavenumber space
-  const T k0 = 10.;
-  const T A = ( 2. / (3.*sqrt(pi)) ) * pow(k0, -5);
-  xarray E_k = A*xt::pow<4>(kx) * xt::exp(-xt::square(kx/k0));
+  const double k0 = 10.;
+  const double A = ( 2. / (3.*sqrt(pi)) ) * pow(k0, -5);
+  ArrayXXd E_k = A*pow(kx, 4) * exp(-pow(kx/k0, 2));
 
   // Velocity in Fourier space
-  xarray r = xt::random::rand<double>({nx, ns});
-  xt::view(r, xt::range(0, nx/2), xt::all()) = -xt::view(r, xt::range(0, nx/2), xt::all());
-  xt::xarray<std::complex<T>> u_k = xt::sqrt(2.*xt::view(E_k, xt::range(2, nx+2), xt::all()))
-                                  * xt::exp(2.0i * pi * r);
+  ArrayXXd r = ArrayXXd::Random(nx, ns);
+  r(seq(0, nx/2), all) = -r(seq(0, nx/2), all);
+
+  ArrayXXcd u_k = sqrt(2.*E_k(seqN(2, nx), all)) * exp(2.0i * pi * r);
 
   // Velocity in physical space
-  xarray u = xt::zeros<double>({nx, ns});
+  ArrayXXd u = ArrayXXd::Zero(nx, ns);
+  FFT<double> fft{};
+  Eigen::VectorXcd u_i;
   for (size_t i{}; i<ns; i++) {
-    xt::xarray<std::complex<double>> u_ki = xt::view(u_k, xt::all(), i);
-    xt::view(u, xt::all(), i) = xt::real(xt::fftw::fft(u_ki));
+    Eigen::VectorXcd u_ki = u_k.col(i);
+    fft.fwd(u_i, u_ki);
+    u.col(i) = u_i.real();
   }
 
-  xt::view(q, xt::range(2, nx+2), xt::all()) = u;
+  q(seqN(2, nx), all) = u;
   q = perbc(q, nx);
 
   return q;
 }
 
-template <typename T>
-xt::xarray<T> perbc(xt::xarray<T> q, const size_t nx) {
-  xt::view(q, 2, xt::all()) = xt::view(q, nx+1, xt::all());
-  xt::view(q, 1, xt::all()) = xt::view(q, nx, xt::all());
-  xt::view(q, 0, xt::all()) = xt::view(q, nx-1, xt::all());
-  xt::view(q, nx+2, xt::all()) = xt::view(q, 3, xt::all());
-  xt::view(q, nx+3, xt::all()) = xt::view(q, 4, xt::all());
-  xt::view(q, nx+4, xt::all()) = xt::view(q, 5, xt::all());
+ArrayXXd perbc(ArrayXXd q, const size_t nx) {
+  q.row(2) = q.row(nx+1);
+  q.row(1) = q.row(nx);
+  q.row(0) = q.row(nx-1);
+  q.row(nx+2) = q.row(3);
+  q.row(nx+3) = q.row(4);
+  q.row(nx+4) = q.row(5);
 
   return q;
 }
 
 template <typename T>
-xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h) {
+ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h) {
   //
   // 4th order compact scheme 2nd derivative periodic
   //
@@ -467,95 +377,53 @@ xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h) {
   // xt::view(f_, xt::range(1, N), xt::all()) = xt::view(f, xt::range(0, N-1), xt::all());
   // xt::view(f_, 0, xt::all()) = xt::view(f, N-2, xt::all());
   Stopwatch stopwatch{ "C4DDP" };
-  xt::xarray<T> f_ = xt::view(f, xt::range(0, N-1), xt::all());
-  xt::xarray<T> f_pp = xt::zeros<T>(f.shape());
+  ArrayXXd f_ = f(seq(0, last-1), all);
+  ArrayXXd f_pp = ArrayXXd::Zero(f.rows(), f.cols());
   // xt::xarray<T> r    = xt::zeros<T>(xt::view(f, xt::range(0, N-1), xt::all()).shape());
-  xt::xarray<T> r    = xt::zeros<T>(f_.shape());
+  ArrayXXd r    = ArrayXXd::Zero(f_.rows(), f_.cols());
 
-  xt::xarray<T> a = (1./10) * xt::ones<T>(r.shape());
-  xt::xarray<T> b =      1. * xt::ones<T>(r.shape());
-  xt::xarray<T> c = (1./10) * xt::ones<T>(r.shape());
+  ArrayXXd a = (1./10) * ArrayXXd::Ones(r.rows(), r.cols());
+  ArrayXXd b =      1. * ArrayXXd::Ones(r.rows(), r.cols());
+  ArrayXXd c = (1./10) * ArrayXXd::Ones(r.rows(), r.cols());
 
-  xt::view(r, xt::range(1, N-2), xt::all()) = (6./5)*(1./pow(h, 2))*(
-         xt::view(f_, xt::range(2, N-1),   xt::all())  // i+1
-    - 2.*xt::view(f_, xt::range(1, N-2), xt::all())    // i
-    +    xt::view(f_, xt::range(0, N-3), xt::all())    // i-1
-  );
-  xt::view(r, 0, xt::all()) = (6./5)*(1./pow(h, 2))*(
-         xt::view(f_, 1,   xt::all())  // i+1
-    - 2.*xt::view(f_, 0,   xt::all())  // i
-    +    xt::view(f_, N-2, xt::all())  // i-1
-  );
-  xt::view(r, N-2, xt::all()) = (6./5)*(1./pow(h, 2))*(
-         xt::view(f_, 0,   xt::all())  // i+1
-    - 2.*xt::view(f_, N-2, xt::all())  // i
-    +    xt::view(f_, N-3, xt::all())  // i-1
-  );
+  auto i = ArrayXi::LinSpaced(N-2, 0, N-2);
+  r(i, all) = (6./5)*(1/std::pow(h, 2))*(f_(i+1, all) - 2.*f_(i, all) + f_(i-1, all));
+  r(last, all) = (6./5)*(1/std::pow(h, 2))*(f_.row(0) - 2*f_.row(-1) + f_.row(-2));
 
   const T alpha = 1./10;
   const T beta = 1./10;
-  const size_t dim = f.dimension();
-  const size_t ns = f.shape()[dim-1];
+  const size_t ns = f.cols();
   for (size_t s{}; s<ns; s++) {
-    xt::view(f_pp, xt::range(0, N-1), s) = TDMA_cyclic(
-      static_cast<xt::xarray<T>>(xt::view(a, xt::all(), s)),
-      static_cast<xt::xarray<T>>(xt::view(b, xt::all(), s)),
-      static_cast<xt::xarray<T>>(xt::view(c, xt::all(), s)),
-      static_cast<xt::xarray<T>>(xt::view(r, xt::all(), s)),
-      alpha, beta
-    );
+    f_pp(seq(0, last-1), s) = TDMA_cyclic(a.col(s), b.col(s), c.col(s), r.col(s), alpha, beta);
   }
-  xt::view(f_pp, N-1, xt::all()) = xt::view(f_pp, 0, xt::all());
+  f_pp(last, all) = f_pp.row(0);
 
   return f_pp;
 }
 
 template <typename T>
-T get_dt(xt::xarray<T> q, const size_t nx, const T dx) {
+T get_dt(ArrayXXd q, const size_t nx, const T dx) {
   Stopwatch stopwatch{ "Get_dt" };
   const T cfl = 0.5;
-  xt::xarray<T> c_ip12 = get_wave_speeds(q, nx);
-  T dt = *xt::nanmin<T>(cfl * dx / c_ip12).begin();
+  ArrayXXd c_ip12 = get_wave_speeds(q, nx);
+  T dt = (cfl * dx / c_ip12).minCoeff();
 
   return dt;
 }
 
-template <typename T>
-xt::xarray<T> get_wave_speeds(xt::xarray<T> q, const size_t nx) {
-  xt::xarray<T> c_ip12 = xt::zeros<T>(q.shape());
-  // xt::xarray<T> stacked_q = xt::xtuple(
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(0, nx), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(1, nx+1), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(2, nx+2), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(3, nx+3), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(4, nx+4), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(5, nx+5), xt::all()))
-  // );
-  xt::xarray<T> abs_q = xt::abs(q);
-  for (size_t s{}; s<q.shape()[1]; s++) {
+ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx) {
+  ArrayXXd c_ip12 = ArrayXXd::Zero(q.rows(), q.cols());
+  for (size_t s{}; s<q.cols(); s++) {
     for (size_t i{ 2 }; i<nx+2; i++) {
-      auto r = xt::view(abs_q, xt::range(i-2, i+3), s);
-      std::set<T> sorted_r(r.begin(), r.end());
-      c_ip12(i, s) = *--sorted_r.end();
+      c_ip12(i, s) = abs(q)(seq(i-2, i+3), s).maxCoeff();
     }
   }
-  // std::cout << "q:\n" << q << std::endl;
-  // std::cout << "c_ip12:\n" << c_ip12 << std::endl;
-  // xt::view(c_ip12, xt::range(2, nx+2), xt::all()) = xt::amax(xt::vstack(xt::xtuple(
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(0, nx), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(1, nx+1), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(2, nx+2), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(3, nx+3), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(4, nx+4), xt::all())),
-  //   static_cast<xt::xarray<T>>(xt::view(q, xt::range(5, nx+5), xt::all()))
-  // )), {0});
 
   return c_ip12;
 }
 
-template <typename T>
-xt::xarray<T> get_flux(xt::xarray<T> q) {
-  xt::xarray<T> F = xt::square(q) / 2.;
+ArrayXXd get_flux(ArrayXXd q) {
+  ArrayXXd F = pow(q, 2) / 2.;
 
   return F;
 }

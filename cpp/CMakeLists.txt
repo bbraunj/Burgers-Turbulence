@@ -9,6 +9,7 @@ set(FFTW_USE_DOUBLE ON)
 # include(/opt/homebrew/Cellar/fftw/3.3.10/lib/cmake/fftw3/FFTW3Config.cmake)
 # find_package(FFTW3 REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 
 pkg_search_module(FFTW3 REQUIRED fftw3 IMPORTED_TARGET)
 include_directories(PkgConfig::FFTW3)
@@ -18,7 +19,7 @@ pkg_search_module(gperftools REQUIRED libprofiler IMPORTED_TARGET)
 link_libraries(PkgConfig::gperftools)
 
 add_executable(main main.cpp)
-target_link_libraries(main PkgConfig::FFTW3 PkgConfig::gperftools)
+target_link_libraries(main PkgConfig::FFTW3 Eigen3::Eigen PkgConfig::gperftools)
 
 # add_executable(test test.cpp)
-# target_link_libraries(test xtensor xtensor::optimize PkgConfig::FFTW3)
+# target_link_libraries(test PkgConfig::FFTW3 Eigen3::Eigen)
