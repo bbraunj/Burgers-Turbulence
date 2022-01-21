@@ -32,7 +32,7 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx);
 
 // Viscous Contribution
 template <typename T>
-ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h);
+ArrayXXd c4ddp(ArrayXXd f, const T h);
 template <typename T>
 ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta);
 ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d);
@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
   // const size_t nx = vm["nx"].as<size_t>();
   const size_t ns = std::pow(2, 6);
   const double nu = 5e-4;
-  const double tmax = 0.01;
+  const double tmax = 0.2;
 
   std::chrono::nanoseconds elapsed_ns;
   {
@@ -106,6 +106,8 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
   std::cout << "\nnx=" << nx << ", ns=" << ns << ", nu=" << nu << ", tmax=" << tmax << std::endl;
   T dt;
   while (time < tmax) {
+    auto start = std::chrono::high_resolution_clock::now();
+
     n_iterations++;
     // std::cout << "Before get_dt" << std::endl;
     dt = get_dt(q, nx, dx);
@@ -116,11 +118,14 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
     // Also make sure we get a data point at 0.05 s
     dt = (time < 0.05 && time+dt > 0.05) ? (0.05 - time) : dt;
     time += dt;
-    std::cout << "  * time: " << std::setprecision(4) << time << " s" << ", dt: " << dt << " s" << std::endl;
 
     // Advance a time step using TVDRK3 time integration
     q = tvdrk3(q, nx, dx, dt, nu);
 
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto elapsed = stop - start;
+    std::cout << "  * time: " << std::setprecision(4) << time << " s"
+      << ", took: " << elapsed.count()/1e9 << " s" << std::endl;
   }
 
   std::cout << "\n  * Done (" << n_iterations << " iterations)" << std::endl;
@@ -129,7 +134,7 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
 
 template <typename T>
 ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu) {
-  Stopwatch stopwatch{ "TVDRK3" };
+  // Stopwatch stopwatch{ "TVDRK3" };
   // 3rd Order Runge-Kutta time integrator.
   // std::cout << "tvdrk3:" << std::endl;
   ArrayXXd q1( q_n );
@@ -160,7 +165,7 @@ ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu) {
   //   rhs.shape() == {nx-1, ns}
   //                   ^^^^ Specifically from 1:(nx+2)
 
-  Stopwatch stopwatch{ "rhs" };
+  // Stopwatch stopwatch{ "rhs" };
   // Reconstruction Scheme
   auto [qL_ip12, qR_ip12] = weno_5(q, nx);
   // xt::xarray<T> [qL_ip12, qR_ip12] = weno_5(q, nx);
@@ -180,10 +185,9 @@ ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu) {
   //               F_ip12           F_im12
 
   // Viscous contribution
-  ArrayXXd uxx = c4ddp(q(seq(2, nx+3), all), nx+1, dx);  // 0 <= x <= nx+1
-  // std::cout << "  + uxx: " << uxx(5, 0) << std::endl;
-
-  rhs += nu*uxx(seq(1, nx), all);
+  ArrayXXd uxx = c4ddp(q(seqN(2, nx+1), all), dx);  // 0 <= x <= nx+1
+  
+  rhs += nu*uxx(seq(1, last-1), all);
   // rhs += nu*xt::view(uxx, xt::range(1, nx), xt::all());
 
   return rhs;
@@ -200,7 +204,7 @@ ArrayXXd rusanov_riemann(ArrayXXd FR,
 }
 
 std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
-  Stopwatch stopwatch{ "WENO-5" };
+  // Stopwatch stopwatch{ "WENO-5" };
   const size_t ns = q.cols();
   // const auto domain_shape = {q.shape()[0]-5, q.shape()[1]};
   ArrayXXd b0      = ArrayXXd::Zero(nx+5, ns);
@@ -367,7 +371,7 @@ ArrayXXd perbc(ArrayXXd q, const size_t nx) {
 }
 
 template <typename T>
-ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h) {
+ArrayXXd c4ddp(ArrayXXd f, const T h) {
   //
   // 4th order compact scheme 2nd derivative periodic
   //
@@ -376,23 +380,26 @@ ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h) {
   // xt::xarray<T> f_   = xt::zeros<T>(f.shape());
   // xt::view(f_, xt::range(1, N), xt::all()) = xt::view(f, xt::range(0, N-1), xt::all());
   // xt::view(f_, 0, xt::all()) = xt::view(f, N-2, xt::all());
-  Stopwatch stopwatch{ "C4DDP" };
-  ArrayXXd f_ = f(seq(0, last-1), all);
-  ArrayXXd f_pp = ArrayXXd::Zero(f.rows(), f.cols());
+  // Stopwatch stopwatch{ "C4DDP" };
+  const size_t nx = f.rows();
+  const size_t ns = f.cols();
+
+  ArrayXXd f_ = f(seq(0, nx-1), all);
+  ArrayXXd f_pp = ArrayXXd::Zero(nx, ns);
   // xt::xarray<T> r    = xt::zeros<T>(xt::view(f, xt::range(0, N-1), xt::all()).shape());
-  ArrayXXd r    = ArrayXXd::Zero(f_.rows(), f_.cols());
+  ArrayXXd r    = ArrayXXd::Zero(nx-1, ns);
 
-  ArrayXXd a = (1./10) * ArrayXXd::Ones(r.rows(), r.cols());
-  ArrayXXd b =      1. * ArrayXXd::Ones(r.rows(), r.cols());
-  ArrayXXd c = (1./10) * ArrayXXd::Ones(r.rows(), r.cols());
+  ArrayXXd a = (1./10) * ArrayXXd::Ones(nx-1, ns);
+  ArrayXXd b =      1. * ArrayXXd::Ones(nx-1, ns);
+  ArrayXXd c = (1./10) * ArrayXXd::Ones(nx-1, ns);
 
-  auto i = ArrayXi::LinSpaced(N-2, 0, N-2);
-  r(i, all) = (6./5)*(1/std::pow(h, 2))*(f_(i+1, all) - 2.*f_(i, all) + f_(i-1, all));
-  r(last, all) = (6./5)*(1/std::pow(h, 2))*(f_.row(0) - 2*f_.row(-1) + f_.row(-2));
+  auto i = ArrayXi::LinSpaced(nx-2, 1, nx-2);
+  r(i, all)    = (6./5)*(1/std::pow(h, 2))*(f_(i+1, all) - 2*f_(i, all)    + f_(i-1, all));
+  r(0, all)    = (6./5)*(1/std::pow(h, 2))*(f_(1, all)   - 2*f_(0, all)    + f_(last, all));
+  r(last, all) = (6./5)*(1/std::pow(h, 2))*(f_(0, all)   - 2*f_(last, all) + f_(last-1, all));
 
   const T alpha = 1./10;
   const T beta = 1./10;
-  const size_t ns = f.cols();
   for (size_t s{}; s<ns; s++) {
     f_pp(seq(0, last-1), s) = TDMA_cyclic(a.col(s), b.col(s), c.col(s), r.col(s), alpha, beta);
   }
@@ -403,7 +410,7 @@ ArrayXXd c4ddp(ArrayXXd f, const size_t N, const T h) {
 
 template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx) {
-  Stopwatch stopwatch{ "Get_dt" };
+  // Stopwatch stopwatch{ "Get_dt" };
   const T cfl = 0.5;
   ArrayXXd c_ip12 = get_wave_speeds(q, nx);
   T dt = (cfl * dx / c_ip12).minCoeff();
