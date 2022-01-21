@@ -1,10 +1,10 @@
-#include <boost/program_options.hpp>
 #include <chrono>
 #include <cmath>
 #include <complex>
 #include <iomanip>
 #include <iostream>
 #include <math.h>
+#include <set>
 #include <utility>
 #include <xtensor/xarray.hpp>
 #include <xtensor/xcomplex.hpp>
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
   // const size_t nx = vm["nx"].as<size_t>();
   const size_t ns = std::pow(2, 6);
   const double nu = 5e-4;
-  const double tmax = 0.01;
+  const double tmax = 0.2;
 
   std::chrono::nanoseconds elapsed_ns;
   {
@@ -138,7 +138,7 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
 
 template <typename T>
 xt::xarray<T> tvdrk3(xt::xarray<T> q_n, const size_t nx, const T dx, const T dt, const T nu) {
-  Stopwatch stopwatch{ "TVDRK3" };
+  // Stopwatch stopwatch{ "TVDRK3" };
   // 3rd Order Runge-Kutta time integrator.
   // std::cout << "tvdrk3:" << std::endl;
   xt::xarray<T> q1( q_n );
@@ -180,7 +180,7 @@ xt::xarray<T> rhs(xt::xarray<T> q, const size_t nx, const T dx, const T nu) {
   //   rhs.shape() == {nx-1, ns}
   //                   ^^^^ Specifically from 1:(nx+2)
 
-  Stopwatch stopwatch{ "rhs" };
+  // Stopwatch stopwatch{ "rhs" };
   // Reconstruction Scheme
   auto [qL_ip12, qR_ip12] = weno_5(q, nx);
   // xt::xarray<T> [qL_ip12, qR_ip12] = weno_5(q, nx);
@@ -225,7 +225,7 @@ xt::xarray<T> rusanov_riemann(xt::xarray<T> FR,
 
 template <typename T>
 std::tuple<xt::xarray<T>, xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx) {
-  Stopwatch stopwatch{ "WENO-5" };
+  // Stopwatch stopwatch{ "WENO-5" };
   const auto q_shape = q.shape();
   const auto domain_shape = {q.shape()[0]-5, q.shape()[1]};
   xt::xarray<T> b0      = xt::zeros<T>(q_shape);
@@ -265,8 +265,8 @@ std::tuple<xt::xarray<T>, xt::xarray<T>> weno_5(xt::xarray<T> q, const size_t nx
                          - 2*xt::view(q, xt::range(2, nx+3), xt::all())  // i
                          +   xt::view(q, xt::range(3, nx+4), xt::all())  // i+1
                          ))
-    + (1./4)*xt::square((  xt::view(q, xt::range(0, nx+1), xt::all())    // i-1
-                         - xt::view(q, xt::range(2, nx+3), xt::all())    // i+1
+    + (1./4)*xt::square((  xt::view(q, xt::range(1, nx+2), xt::all())    // i-1
+                         - xt::view(q, xt::range(3, nx+4), xt::all())    // i+1
                         ))
   );
   xt::view(b2, xt::range(2, nx+3), xt::all()) = (
@@ -466,7 +466,7 @@ xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h) {
   // xt::xarray<T> f_   = xt::zeros<T>(f.shape());
   // xt::view(f_, xt::range(1, N), xt::all()) = xt::view(f, xt::range(0, N-1), xt::all());
   // xt::view(f_, 0, xt::all()) = xt::view(f, N-2, xt::all());
-  Stopwatch stopwatch{ "C4DDP" };
+  // Stopwatch stopwatch{ "C4DDP" };
   xt::xarray<T> f_ = xt::view(f, xt::range(0, N-1), xt::all());
   xt::xarray<T> f_pp = xt::zeros<T>(f.shape());
   // xt::xarray<T> r    = xt::zeros<T>(xt::view(f, xt::range(0, N-1), xt::all()).shape());
@@ -477,19 +477,19 @@ xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h) {
   xt::xarray<T> c = (1./10) * xt::ones<T>(r.shape());
 
   xt::view(r, xt::range(1, N-2), xt::all()) = (6./5)*(1./pow(h, 2))*(
-         xt::view(f_, xt::range(2, N-1),   xt::all())  // i+1
-    - 2.*xt::view(f_, xt::range(1, N-2), xt::all())    // i
-    +    xt::view(f_, xt::range(0, N-3), xt::all())    // i-1
+         xt::view(f_, xt::range(2, N-1), xt::all())  // i+1
+    - 2.*xt::view(f_, xt::range(1, N-2), xt::all())  // i
+    +    xt::view(f_, xt::range(0, N-3), xt::all())  // i-1
   );
   xt::view(r, 0, xt::all()) = (6./5)*(1./pow(h, 2))*(
          xt::view(f_, 1,   xt::all())  // i+1
     - 2.*xt::view(f_, 0,   xt::all())  // i
-    +    xt::view(f_, N-2, xt::all())  // i-1
+    +    xt::view(f_, N-1, xt::all())  // i-1
   );
-  xt::view(r, N-2, xt::all()) = (6./5)*(1./pow(h, 2))*(
+  xt::view(r, N-1, xt::all()) = (6./5)*(1./pow(h, 2))*(
          xt::view(f_, 0,   xt::all())  // i+1
-    - 2.*xt::view(f_, N-2, xt::all())  // i
-    +    xt::view(f_, N-3, xt::all())  // i-1
+    - 2.*xt::view(f_, N-1, xt::all())  // i
+    +    xt::view(f_, N-2, xt::all())  // i-1
   );
 
   const T alpha = 1./10;
@@ -512,7 +512,7 @@ xt::xarray<T> c4ddp(xt::xarray<T> f, const size_t N, const T h) {
 
 template <typename T>
 T get_dt(xt::xarray<T> q, const size_t nx, const T dx) {
-  Stopwatch stopwatch{ "Get_dt" };
+  // Stopwatch stopwatch{ "Get_dt" };
   const T cfl = 0.5;
   xt::xarray<T> c_ip12 = get_wave_speeds(q, nx);
   T dt = *xt::nanmin<T>(cfl * dx / c_ip12).begin();
