@@ -17,26 +17,26 @@ namespace plt = matplotlibcpp;
 
 // Function declarations
 // ---------------------
-void plot_E_ks(std::vector<ArrayXd> E_ks, std::vector<size_t> nxs);
+void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs);
 template <typename T>
 ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
 template <typename T>
-ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu);
+ArrayXXd tvdrk3(const ArrayXXd& q_n, const size_t nx, const T dx, const T dt, const T nu);
 template <typename T>
-ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu);
-ArrayXXd rusanov_riemann(ArrayXXd FR,
-                         ArrayXXd FL,
-                         ArrayXXd qR_ip12,
-                         ArrayXXd qL_ip12,
-                         ArrayXXd c_ip12);
+ArrayXXd rhs(const ArrayXXd& q, const size_t nx, const T dx, const T nu);
+ArrayXXd rusanov_riemann(const ArrayXXd& FR,
+                         const ArrayXXd& FL,
+                         const ArrayXXd& qR_ip12,
+                         const ArrayXXd& qL_ip12,
+                         const ArrayXXd& c_ip12);
 ArrayXXd perbc(ArrayXXd q, const size_t nx);
 
 // Reconstruction Scheme
-std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx);
+std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx);
 
 // Viscous Contribution
 template <typename T>
-ArrayXXd c4ddp(ArrayXXd f, const T h);
+ArrayXXd c4ddp(const ArrayXXd& f, const T h);
 template <typename T>
 ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta);
 ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d);
@@ -46,9 +46,9 @@ template <typename T>
 ArrayXXd get_IC_q(const size_t ns, const size_t nx, const T dx);
 template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx);
-ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx);
-ArrayXXd get_flux(ArrayXXd q);
-ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx);
+ArrayXXd get_wave_speeds(const ArrayXXd& q, const size_t nx);
+ArrayXXd get_flux(const ArrayXXd& q);
+ArrayXd get_KE_k_space(const ArrayXXd& q, const size_t nx);
 // ---------------------
 
 const double pi{ 3.1415926535897 };
@@ -115,7 +115,7 @@ int main(int argc, char** argv) {
   return 0;
 }
 
-void plot_E_ks(std::vector<ArrayXd> E_ks, std::vector<size_t> nxs) {
+void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs) {
   std::string filename = "E_k_nx=";
   for (size_t nx : nxs) filename += std::to_string(nx) + "_";
   filename.pop_back();
@@ -150,7 +150,6 @@ ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
     auto start = std::chrono::high_resolution_clock::now();
 
     n_iterations++;
-    // std::cout << "Before get_dt" << std::endl;
     dt = get_dt(q, nx, dx);
 
     // Make sure we don't go past tmax
@@ -173,13 +172,12 @@ ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
 
   std::cout << "\n  * Done (" << n_iterations << " iterations)" << std::endl;
 
-  // std::cout << "\nE_k:\n" << get_KE_k_space(q, nx) << std::endl;
   ArrayXd E_k = get_KE_k_space(q, nx);
   return E_k;
 }
 
 
-ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx) {
+ArrayXd get_KE_k_space(const ArrayXXd& q, const size_t nx) {
   // Get the average kinetic energy of the domain (0:nx)
   // E = (1/nx) * 0.5*sum(u**2)
 
@@ -189,7 +187,6 @@ ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx) {
   for (size_t i{}; i<q.cols(); i++) {
     Eigen::VectorXcd q_i = q.col(i);
     fft.fwd(u_ki, q_i);
-    // u_k(all, i) = u_ki;
     u_k.col(i) = u_ki.real() / q.rows();
   }
 
@@ -202,24 +199,19 @@ ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx) {
 
 
 template <typename T>
-ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu) {
-  // Stopwatch stopwatch{ "TVDRK3" };
+ArrayXXd tvdrk3(const ArrayXXd& q_n, const size_t nx, const T dx, const T dt, const T nu) {
   // 3rd Order Runge-Kutta time integrator.
-  // std::cout << "tvdrk3:" << std::endl;
   ArrayXXd q1( q_n );
   auto i = ArrayXi::LinSpaced(nx-1, 3, nx+2);
   q1(i, all) = q_n(i, all) + dt*rhs(q_n, nx, dx, nu);
-  // std::cout << "* q1: " << q1(5, 0) << std::endl;
   q1 = perbc(q1, nx);
 
   ArrayXXd q2( q_n );
   q2(i, all) = 0.75*q_n(i, all) + 0.25*q1(i, all) + 0.25*dt*rhs(q1, nx, dx, nu);
-  // std::cout << "* q2: " << q2(5, 0) << std::endl;
   q2 = perbc(q2, nx);
 
   ArrayXXd q_np1( q_n );
   q_np1(i, all) = (1./3)*q_n(i, all) + (2./3)*q2(i, all) + (2./3)*dt*rhs(q2, nx, dx, nu);
-  // std::cout << "* q_np1: " << q_np1(5, 0) << std::endl;
   q_np1 = perbc(q_np1, nx);
 
   return q_np1;
@@ -227,27 +219,22 @@ ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T n
 
 
 template <typename T>
-ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu) {
+ArrayXXd rhs(const ArrayXXd& q, const size_t nx, const T dx, const T nu) {
   // Note:
   //   q.shape() == {nx+5, ns}
   //                 ^^^^ Specifically from 0:(nx+5)
   //   rhs.shape() == {nx-1, ns}
   //                   ^^^^ Specifically from 1:(nx+2)
 
-  // Stopwatch stopwatch{ "rhs" };
   // Reconstruction Scheme
   auto [qL_ip12, qR_ip12] = weno_5(q, nx);
-  // xt::xarray<T> [qL_ip12, qR_ip12] = weno_5(q, nx);
 
   ArrayXXd c_ip12 = get_wave_speeds(q, nx);
   ArrayXXd FR = get_flux(qR_ip12);
   ArrayXXd FL = get_flux(qL_ip12);
-  // std::cout << "  + FL: " << FL(5, 0) << std::endl;
-  // std::cout << "  + FR: " << FR(5, 0) << std::endl;
 
   // Riemann Solvers
   ArrayXXd F_ip12 = rusanov_riemann(FR, FL, qR_ip12, qL_ip12, c_ip12);
-  // std::cout << "  + F_ip12: " << F_ip12(5, 0) << std::endl;
 
   auto i = ArrayXi::LinSpaced(nx-1, 1, nx) + 2;
   ArrayXXd rhs = -(F_ip12(i, all) - F_ip12(i-1, all)) / dx;
@@ -257,25 +244,23 @@ ArrayXXd rhs(ArrayXXd q, const size_t nx, const T dx, const T nu) {
   ArrayXXd uxx = c4ddp(q(seqN(2, nx+1), all), dx);  // 0 <= x <= nx+1
   
   rhs += nu*uxx(seq(1, last-1), all);
-  // rhs += nu*xt::view(uxx, xt::range(1, nx), xt::all());
 
   return rhs;
 }
 
-ArrayXXd rusanov_riemann(ArrayXXd FR,
-                         ArrayXXd FL,
-                         ArrayXXd qR_ip12,
-                         ArrayXXd qL_ip12,
-                         ArrayXXd c_ip12) {
+ArrayXXd rusanov_riemann(const ArrayXXd& FR,
+                         const ArrayXXd& FL,
+                         const ArrayXXd& qR_ip12,
+                         const ArrayXXd& qL_ip12,
+                         const ArrayXXd& c_ip12) {
   ArrayXXd F_ip12 = 0.5*((FR + FL) - c_ip12*(qR_ip12 - qL_ip12));
 
   return F_ip12;
 }
 
-std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
-  // Stopwatch stopwatch{ "WENO-5" };
+std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx) {
   const size_t ns = q.cols();
-  // const auto domain_shape = {q.shape()[0]-5, q.shape()[1]};
+
   ArrayXXd b0      = ArrayXXd::Zero(nx+5, ns);
   ArrayXXd b1      = ArrayXXd::Zero(nx+5, ns);
   ArrayXXd b2      = ArrayXXd::Zero(nx+5, ns);
@@ -299,7 +284,6 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
                 + (1./4)*pow(3*q(i, all) - 4*q(i+1, all) + q(i+2, all), 2));
 
   // Nonlinear weights
-  // const auto i = xt::range(2, nx+2);
   auto i2 = ArrayXi::LinSpaced(nx, 0, nx) + 2;
   ArrayXXd a0 = d0 / pow(b0(i2, all) + eps, 2);
   ArrayXXd a1 = d1 / pow(b1(i2, all) + eps, 2);
@@ -316,7 +300,6 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
   qL_ip12(i2, all) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
 
   // Negative reconstruction @ i-1/2 + 1 (so i+1/2)
-  // const auto i2 = xt::range(3, nx+3);
   auto i3 = ArrayXi::LinSpaced(nx, 0, nx) + 3;
   a0 = d0 / pow(b0(i3, all) + eps, 2);
   a1 = d1 / pow(b1(i3, all) + eps, 2);
@@ -331,9 +314,6 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(ArrayXXd q, const size_t nx) {
   q2 = 2*q(i3, all)   + 5*q(i3-1, all) -    q(i3-2, all);
   qR_ip12(i3-1, all) = (w0/6)*q0 + (w1/6)*q1 + (w2/6)*q2;
 
-  // std::pair<xt::xarray<T>, xt::xarray<T>> p(qL_ip12, qR_ip12);
-  // std::cout << "  + qL_ip12: " << qL_ip12(5, 0) << std::endl;
-  // std::cout << "  + qR_ip12: " << qR_ip12(5, 0) << std::endl;
   return std::make_tuple(qL_ip12, qR_ip12);
 }
 
@@ -440,22 +420,17 @@ ArrayXXd perbc(ArrayXXd q, const size_t nx) {
 }
 
 template <typename T>
-ArrayXXd c4ddp(ArrayXXd f, const T h) {
+ArrayXXd c4ddp(const ArrayXXd& f, const T h) {
   //
   // 4th order compact scheme 2nd derivative periodic
   //
   // f_ = f minus repeating part (f[0] = f[-1])
   //        plus last nonrepeating inserted at index 0 (f_[0] = f[-2])
-  // xt::xarray<T> f_   = xt::zeros<T>(f.shape());
-  // xt::view(f_, xt::range(1, N), xt::all()) = xt::view(f, xt::range(0, N-1), xt::all());
-  // xt::view(f_, 0, xt::all()) = xt::view(f, N-2, xt::all());
-  // Stopwatch stopwatch{ "C4DDP" };
   const size_t nx = f.rows();
   const size_t ns = f.cols();
 
   ArrayXXd f_ = f(seq(0, nx-1), all);
   ArrayXXd f_pp = ArrayXXd::Zero(nx, ns);
-  // xt::xarray<T> r    = xt::zeros<T>(xt::view(f, xt::range(0, N-1), xt::all()).shape());
   ArrayXXd r    = ArrayXXd::Zero(nx-1, ns);
 
   ArrayXXd a = (1./10) * ArrayXXd::Ones(nx-1, ns);
@@ -479,7 +454,6 @@ ArrayXXd c4ddp(ArrayXXd f, const T h) {
 
 template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx) {
-  // Stopwatch stopwatch{ "Get_dt" };
   const T cfl = 0.5;
   ArrayXXd c_ip12 = get_wave_speeds(q, nx);
   T dt = (cfl * dx / c_ip12).minCoeff();
@@ -487,7 +461,7 @@ T get_dt(ArrayXXd q, const size_t nx, const T dx) {
   return dt;
 }
 
-ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx) {
+ArrayXXd get_wave_speeds(const ArrayXXd& q, const size_t nx) {
   ArrayXXd c_ip12 = ArrayXXd::Zero(q.rows(), q.cols());
   for (size_t s{}; s<q.cols(); s++) {
     for (size_t i{ 2 }; i<nx+2; i++) {
@@ -498,7 +472,7 @@ ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx) {
   return c_ip12;
 }
 
-ArrayXXd get_flux(ArrayXXd q) {
+ArrayXXd get_flux(const ArrayXXd& q) {
   ArrayXXd F = pow(q, 2) / 2.;
 
   return F;
