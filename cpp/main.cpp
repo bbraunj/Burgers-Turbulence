@@ -23,11 +23,36 @@ namespace plt = matplotlibcpp;
 
 const double pi{ 3.1415926535897 };
 
+// Supporting Code
+std::chrono::nanoseconds dummy_time;
+struct Stopwatch {
+  Stopwatch(std::chrono::nanoseconds& result)
+    : name{ "No_name" },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name, std::chrono::nanoseconds& result)
+    : name{ name },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name)
+    : name{ name },
+    result{ dummy_time },
+    start{ std::chrono::high_resolution_clock::now() } { }
+
+  ~Stopwatch() {
+    result = std::chrono::high_resolution_clock::now() - start;
+    std::cout << "-[" << name << "] Ended. Elapsed Time: " <<
+      std::setprecision(4) << result.count()/1e6 << " ms" << std::endl;
+  }
+private:
+  const std::string name;
+  std::chrono::nanoseconds& result;
+  const std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
+
 // Forward declarations
 // --------------------
-struct Stopwatch;
-std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv,
-                                          size_t default_nx = std::pow(2, 4));
+std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv, size_t default_nx = std::pow(2, 4));
 
 // Present results
 void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs);
@@ -73,7 +98,7 @@ ArrayXXd rusanov_riemann(const ArrayXXd& FR,
 // ---------------------
 
 int main(int argc, char** argv) {
-  const auto nxs = get_nxs_from_cmd_line(int argc, char** argv);
+  const auto nxs = get_nxs_from_cmd_line(argc, argv);
   const size_t ns = std::pow(2, 6);
   const double nu = 5e-4;
   const double tmax = 0.2;
@@ -92,7 +117,7 @@ int main(int argc, char** argv) {
   return 0;
 }
 
-std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv, size_t default_nx = std::pow(2, 4)) {
+std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv, size_t default_nx) {
   std::vector<size_t> nxs(default_nx);
 
   if (argc > 1) {
@@ -101,7 +126,6 @@ std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv, size_t default_
       size_t nx = strtol(argv[i], NULL, 10);
       if (strtol(argv[i], NULL, 10) <= 0) {
         std::cerr << "Invalid input! Must enter a positive integer for NX." << std::endl;
-        return 1;
       }
       nxs.emplace_back(nx);
     }
@@ -504,30 +528,3 @@ ArrayXXd get_flux(const ArrayXXd& q) {
 
   return F;
 }
-
-// Supporting Code
-std::chrono::nanoseconds dummy_time;
-struct Stopwatch {
-  Stopwatch(std::chrono::nanoseconds& result)
-    : name{ "No_name" },
-    result{ result },
-    start{ std::chrono::high_resolution_clock::now() } { }
-  Stopwatch(std::string name, std::chrono::nanoseconds& result)
-    : name{ name },
-    result{ result },
-    start{ std::chrono::high_resolution_clock::now() } { }
-  Stopwatch(std::string name)
-    : name{ name },
-    result{ dummy_time },
-    start{ std::chrono::high_resolution_clock::now() } { }
-
-  ~Stopwatch() {
-    result = std::chrono::high_resolution_clock::now() - start;
-    std::cout << "-[" << name << "] Ended. Elapsed Time: " <<
-      std::setprecision(4) << result.count()/1e6 << " ms" << std::endl;
-  }
-private:
-  const std::string name;
-  std::chrono::nanoseconds& result;
-  const std::chrono::time_point<std::chrono::high_resolution_clock> start;
-};

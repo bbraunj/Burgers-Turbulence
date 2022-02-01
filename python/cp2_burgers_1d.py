@@ -896,8 +896,12 @@ if __name__ == "__main__":
             WENO_3 | {"nx": 2**14, "ns": 2**6},
             # nx=2**15 is considered our "DNS" results
         ],
+        "WENO_5_cpp_Comparison": [
+            WENO_5 | {"nx": 2**8, "ns": 2**6},  # nx=512, ns=64
+            WENO_5 | {"nx": 2**9, "ns": 2**6},
+        ],
         "WENO_5_Resolution_Comparison": [
-            WENO_5 | {"nx": 2**9, "ns": 2**6},  # nx=512, ns=32
+            WENO_5 | {"nx": 2**9, "ns": 2**6},  # nx=512, ns=64
             WENO_5 | {"nx": 2**10, "ns": 2**6},
             WENO_5 | {"nx": 2**11, "ns": 2**6},
             WENO_5 | {"nx": 2**12, "ns": 2**6},
@@ -997,9 +1001,10 @@ if __name__ == "__main__":
     }
 
     comparisons_to_run = [
-        "MUSCL_Q_Limiters_Comparison",
+        "WENO_5_cpp_Comparison",
+        # "MUSCL_Q_Limiters_Comparison",
         # "MUSCL_KT_Limiters_Comparison",
-        "MUSCL_CS_Limiters_Comparison",
+        # "MUSCL_CS_Limiters_Comparison",
         # "MUSCL_3rd_Limiters_Comparison",
         # "MUSCL_Upwind_Limiters_Comparison",
         # "MUSCL_Fromm_Limiters_Comparison",
