@@ -1,4 +1,5 @@
 #define EIGEN_FFTW_DEFAULT
+#include "matplotlibcpp.h"
 #include <chrono>
 #include <cmath>
 #include <complex>

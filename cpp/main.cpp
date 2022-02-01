@@ -1,21 +1,25 @@
 #define EIGEN_FFTW_DEFAULT
+#include "matplotlibcpp.h"
 #include <chrono>
 #include <cmath>
 #include <complex>
 #include <iomanip>
 #include <iostream>
 #include <math.h>
+#include <vector>
 #include <utility>
 #include <Eigen/Dense>
 #include <unsupported/Eigen/FFT>
 
 using namespace Eigen;
+namespace plt = matplotlibcpp;
 
 
 // Function declarations
 // ---------------------
+void plot_E_ks(std::vector<ArrayXd> E_ks, std::vector<size_t> nxs);
 template <typename T>
-void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
+ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
 template <typename T>
 ArrayXXd tvdrk3(ArrayXXd q_n, const size_t nx, const T dx, const T dt, const T nu);
 template <typename T>
@@ -44,6 +48,7 @@ template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx);
 ArrayXXd get_wave_speeds(ArrayXXd q, const size_t nx);
 ArrayXXd get_flux(ArrayXXd q);
+ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx);
 // ---------------------
 
 const double pi{ 3.1415926535897 };
@@ -77,25 +82,61 @@ private:
 
 int main(int argc, char** argv) {
   // Get nx from command line if we can
-  size_t nx = std::pow(2, 4);
-  if (argc > 1) { nx = strtol(argv[1], NULL, 10); }
+  std::vector<size_t> nxs(std::pow(2, 4));
+
+  if (argc > 1) {
+    nxs.clear();
+    for (size_t i{ 1 }; i<argc; i++) {
+      size_t nx = strtol(argv[i], NULL, 10);
+      if (strtol(argv[i], NULL, 10) == -1) {
+        std::cerr << "Invalid input! Must enter a positive integer for NX." << std::endl;
+        return 1;
+      }
+      nxs.emplace_back(nx);
+    }
+  }
 
   // const size_t nx = vm["nx"].as<size_t>();
   const size_t ns = std::pow(2, 6);
   const double nu = 5e-4;
   const double tmax = 0.2;
 
-  std::chrono::nanoseconds elapsed_ns;
+  std::vector<ArrayXd> E_ks;
   {
-    Stopwatch stopwatch{ "Overall", elapsed_ns };
-    outer_loop<double>(nx, ns, nu, tmax);
+    Stopwatch stopwatch{ "All Runs" };
+    for (size_t nx : nxs) {
+      Stopwatch stopwatch{ "NX="+std::to_string(nx) };
+      ArrayXd E_k = outer_loop<double>(nx, ns, nu, tmax);
+      E_ks.emplace_back(E_k);
+    }
   }
-  std::cout << "\nExecution time: " << std::setprecision(4) << elapsed_ns.count()/1e9 << " s" << std::endl;
+
+  plot_E_ks(E_ks, nxs);
+  return 0;
+}
+
+void plot_E_ks(std::vector<ArrayXd> E_ks, std::vector<size_t> nxs) {
+  std::string filename = "E_k_nx=";
+  for (size_t nx : nxs) filename += std::to_string(nx) + "_";
+  filename.pop_back();
+  filename += ".pdf";
+
+  std::cout << "\n* Plotting '" << filename << "'" << std::endl;
+
+  for (size_t i{}; i<nxs.size(); i++) {
+    VectorXd x = VectorXd::LinSpaced(E_ks[i].rows(), 0, E_ks[i].rows());
+    std::vector xv(x.begin(), x.end());
+    std::vector E_kv(E_ks[i].begin(), E_ks[i].end());
+    plt::named_loglog("NX="+std::to_string(nxs[i]), xv, E_kv);
+  }
+  plt::legend();
+  plt::save(filename);
+  std::cout << "  * Done" << std::endl;
 }
 
 
 template <typename T>
-void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
+ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
   const T lx{ 2*pi };
   const T dx{ lx / nx };
   ArrayXXd q = get_IC_q(ns, nx, dx);
@@ -111,7 +152,6 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
     n_iterations++;
     // std::cout << "Before get_dt" << std::endl;
     dt = get_dt(q, nx, dx);
-    std::cout << "    * Calculated dt: " << dt << std::endl;
 
     // Make sure we don't go past tmax
     dt = (time + dt) < tmax ? dt : tmax - time;
@@ -124,11 +164,40 @@ void outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
 
     auto stop = std::chrono::high_resolution_clock::now();
     auto elapsed = stop - start;
-    std::cout << "  * time: " << std::setprecision(4) << time << " s"
-      << ", took: " << elapsed.count()/1e9 << " s" << std::endl;
+    std::cout << std::setprecision(4);
+    std::cout << "  * time: " << std::fixed << time << " s, ";
+    std::cout << "dt: " << std::scientific << dt << " s, ";
+    std::cout << "took: " << std::fixed << elapsed.count()/1e6 << " ms  \r";
+    std::cout << std::flush;
   }
 
   std::cout << "\n  * Done (" << n_iterations << " iterations)" << std::endl;
+
+  // std::cout << "\nE_k:\n" << get_KE_k_space(q, nx) << std::endl;
+  ArrayXd E_k = get_KE_k_space(q, nx);
+  return E_k;
+}
+
+
+ArrayXd get_KE_k_space(ArrayXXd q, const size_t nx) {
+  // Get the average kinetic energy of the domain (0:nx)
+  // E = (1/nx) * 0.5*sum(u**2)
+
+  ArrayXXd u_k = ArrayXXd::Zero(q.rows(), q.cols());
+  FFT<double> fft{};
+  Eigen::VectorXcd u_ki;
+  for (size_t i{}; i<q.cols(); i++) {
+    Eigen::VectorXcd q_i = q.col(i);
+    fft.fwd(u_ki, q_i);
+    // u_k(all, i) = u_ki;
+    u_k.col(i) = u_ki.real() / q.rows();
+  }
+
+  ArrayXXd Es = 0.5*pow(u_k(seqN(3, nx-1), all), 2);  // Energy spectrum
+  ArrayXi i = ArrayXi::LinSpaced(nx/2 - 2, 1, nx/2 - 1);
+  ArrayXd E_k = (0.5*(Es(i, all) + Es(nx-1-i, all))).rowwise().sum() / q.cols();
+
+  return E_k;
 }
 
 
