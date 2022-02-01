@@ -1,3 +1,10 @@
+// References:
+// -----------
+// [1] San et. al. 2014 Numerical.
+//     https://doi.org/10.1016/j.compfluid.2013.11.006
+// [2] Maulik et. al. 2018 Adaptive. https://doi.org/10.1002/fld.4489
+// [3] Jiang et. al. 1999. https://doi.org/10.1006/jcph.1999.6207
+
 #define EIGEN_FFTW_DEFAULT
 #include "matplotlibcpp.h"
 #include <chrono>
@@ -14,22 +21,27 @@
 using namespace Eigen;
 namespace plt = matplotlibcpp;
 
+const double pi{ 3.1415926535897 };
 
-// Function declarations
-// ---------------------
+// Forward declarations
+// --------------------
+struct Stopwatch;
+std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv,
+                                          size_t default_nx = std::pow(2, 4));
+
+// Present results
 void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs);
+ArrayXd get_KE_k_space(const ArrayXXd& q, const size_t nx);
+
+// Main algorithm
 template <typename T>
 ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax);
+
 template <typename T>
 ArrayXXd tvdrk3(const ArrayXXd& q_n, const size_t nx, const T dx, const T dt, const T nu);
+
 template <typename T>
 ArrayXXd rhs(const ArrayXXd& q, const size_t nx, const T dx, const T nu);
-ArrayXXd rusanov_riemann(const ArrayXXd& FR,
-                         const ArrayXXd& FL,
-                         const ArrayXXd& qR_ip12,
-                         const ArrayXXd& qL_ip12,
-                         const ArrayXXd& c_ip12);
-ArrayXXd perbc(ArrayXXd q, const size_t nx);
 
 // Reconstruction Scheme
 std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx);
@@ -37,66 +49,31 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx);
 // Viscous Contribution
 template <typename T>
 ArrayXXd c4ddp(const ArrayXXd& f, const T h);
+
 template <typename T>
 ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta);
+
 ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d);
 
-// Problem Quantities
+// Supporting functions
 template <typename T>
 ArrayXXd get_IC_q(const size_t ns, const size_t nx, const T dx);
+
 template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx);
+
+ArrayXXd perbc(ArrayXXd q, const size_t nx);
 ArrayXXd get_wave_speeds(const ArrayXXd& q, const size_t nx);
 ArrayXXd get_flux(const ArrayXXd& q);
-ArrayXd get_KE_k_space(const ArrayXXd& q, const size_t nx);
+ArrayXXd rusanov_riemann(const ArrayXXd& FR,
+                         const ArrayXXd& FL,
+                         const ArrayXXd& qR_ip12,
+                         const ArrayXXd& qL_ip12,
+                         const ArrayXXd& c_ip12);
 // ---------------------
 
-const double pi{ 3.1415926535897 };
-
-std::chrono::nanoseconds dummy_time;
-struct Stopwatch {
-  Stopwatch(std::chrono::nanoseconds& result)
-    : name{ "No_name" },
-    result{ result },
-    start{ std::chrono::high_resolution_clock::now() } { }
-  Stopwatch(std::string name, std::chrono::nanoseconds& result)
-    : name{ name },
-    result{ result },
-    start{ std::chrono::high_resolution_clock::now() } { }
-  Stopwatch(std::string name)
-    : name{ name },
-    result{ dummy_time },
-    start{ std::chrono::high_resolution_clock::now() } { }
-
-  ~Stopwatch() {
-    result = std::chrono::high_resolution_clock::now() - start;
-    std::cout << "-[" << name << "] Ended. Elapsed Time: " <<
-      std::setprecision(4) << result.count()/1e6 << " ms" << std::endl;
-  }
-private:
-  const std::string name;
-  std::chrono::nanoseconds& result;
-  const std::chrono::time_point<std::chrono::high_resolution_clock> start;
-};
-
-
 int main(int argc, char** argv) {
-  // Get nx from command line if we can
-  std::vector<size_t> nxs(std::pow(2, 4));
-
-  if (argc > 1) {
-    nxs.clear();
-    for (size_t i{ 1 }; i<argc; i++) {
-      size_t nx = strtol(argv[i], NULL, 10);
-      if (strtol(argv[i], NULL, 10) == -1) {
-        std::cerr << "Invalid input! Must enter a positive integer for NX." << std::endl;
-        return 1;
-      }
-      nxs.emplace_back(nx);
-    }
-  }
-
-  // const size_t nx = vm["nx"].as<size_t>();
+  const auto nxs = get_nxs_from_cmd_line(int argc, char** argv);
   const size_t ns = std::pow(2, 6);
   const double nu = 5e-4;
   const double tmax = 0.2;
@@ -113,6 +90,24 @@ int main(int argc, char** argv) {
 
   plot_E_ks(E_ks, nxs);
   return 0;
+}
+
+std::vector<size_t> get_nxs_from_cmd_line(int argc, char** argv, size_t default_nx = std::pow(2, 4)) {
+  std::vector<size_t> nxs(default_nx);
+
+  if (argc > 1) {
+    nxs.clear();
+    for (size_t i{ 1 }; i<argc; i++) {
+      size_t nx = strtol(argv[i], NULL, 10);
+      if (strtol(argv[i], NULL, 10) <= 0) {
+        std::cerr << "Invalid input! Must enter a positive integer for NX." << std::endl;
+        return 1;
+      }
+      nxs.emplace_back(nx);
+    }
+  }
+
+  return nxs;
 }
 
 void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs) {
@@ -135,6 +130,9 @@ void plot_E_ks(const std::vector<ArrayXd>& E_ks, const std::vector<size_t>& nxs)
 }
 
 
+// ================================================================================================== 
+// ========================================= Main Algorithm ========================================= 
+// ================================================================================================== 
 template <typename T>
 ArrayXd outer_loop(const size_t nx, const size_t ns, const T nu, const T tmax) {
   const T lx{ 2*pi };
@@ -259,6 +257,28 @@ ArrayXXd rusanov_riemann(const ArrayXXd& FR,
 }
 
 std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx) {
+  // WENO 5th Order reconstruction scheme [2]
+  //                                                                            
+  //              Cell
+  //               |
+  //   Boundary -| | |- Boundary
+  //             v v v
+  // |-*-|-*-|...|-*-|...|-*-|
+  //   0   1     ^ i ^     n
+  //         i-1/2   i+1/2
+  //                                                                            
+  // - Based on cell definition above, estimate q_i-1/2 and q_i+1/2 using
+  //   nodes values from cells on the left (q^L) or cells on the right (q^R).
+  //                                                                            
+  // > Note::
+  // >     There may be ghost points on either end of the computational domain.
+  // >     For this reason, s & e are inputs to define the indices of the start
+  // >     and end of the computational domain. All points before and after
+  // >     these indices are ghost points.
+  //                                                                            
+  // Returns:
+  //     std::tuple: A tuple containing q^L_i+1/2 and q^R_i+1/2 respectively.
+
   const size_t ns = q.cols();
 
   ArrayXXd b0      = ArrayXXd::Zero(nx+5, ns);
@@ -319,6 +339,39 @@ std::tuple<ArrayXXd, ArrayXXd> weno_5(const ArrayXXd& q, const size_t nx) {
 
 
 template <typename T>
+ArrayXXd c4ddp(const ArrayXXd& f, const T h) {
+  //
+  // 4th order compact scheme 2nd derivative periodic
+  //
+  // f_ = f minus repeating part (f[0] = f[-1])
+  const size_t nx = f.rows();
+  const size_t ns = f.cols();
+
+  ArrayXXd f_ = f(seq(0, nx-1), all);
+  ArrayXXd f_pp = ArrayXXd::Zero(nx, ns);
+  ArrayXXd r    = ArrayXXd::Zero(nx-1, ns);
+
+  ArrayXXd a = (1./10) * ArrayXXd::Ones(nx-1, ns);
+  ArrayXXd b =      1. * ArrayXXd::Ones(nx-1, ns);
+  ArrayXXd c = (1./10) * ArrayXXd::Ones(nx-1, ns);
+
+  auto i = ArrayXi::LinSpaced(nx-2, 1, nx-2);
+  r(i, all)    = (6./5)*(1/std::pow(h, 2))*(f_(i+1, all) - 2*f_(i, all)    + f_(i-1, all));
+  r(0, all)    = (6./5)*(1/std::pow(h, 2))*(f_(1, all)   - 2*f_(0, all)    + f_(last, all));
+  r(last, all) = (6./5)*(1/std::pow(h, 2))*(f_(0, all)   - 2*f_(last, all) + f_(last-1, all));
+
+  const T alpha = 1./10;
+  const T beta = 1./10;
+  for (size_t s{}; s<ns; s++) {
+    f_pp(seq(0, last-1), s) = TDMA_cyclic(a.col(s), b.col(s), c.col(s), r.col(s), alpha, beta);
+  }
+  f_pp(last, all) = f_pp.row(0);
+
+  return f_pp;
+}
+
+
+template <typename T>
 ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, const T beta) {
 
   const size_t nf = a.rows();
@@ -341,6 +394,10 @@ ArrayXd TDMA_cyclic(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d, const T alpha, c
 
 
 ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d) {
+  // TDMA solver, a b c d can be NumPy array type or Python list type.
+  // refer to http://en.wikipedia.org/wiki/Tridiagonal_matrix_algorithm
+  // and to http://www.cfd-online.com/Wiki/Tridiagonal_matrix_algorithm_-
+  // _TDMA_(Thomas_algorithm)
 
   const size_t nf = a.rows();  // number of equations
 
@@ -363,6 +420,9 @@ ArrayXd TDMAsolver(ArrayXd a, ArrayXd b, ArrayXd c, ArrayXd d) {
 }
 
 
+// -------------------------------------------- 
+// -------------- Misc Functions -------------- 
+// -------------------------------------------- 
 template <typename T>
 ArrayXXd get_IC_q(const size_t ns, const size_t nx, const T dx) {
   using namespace std::literals::complex_literals;
@@ -420,39 +480,6 @@ ArrayXXd perbc(ArrayXXd q, const size_t nx) {
 }
 
 template <typename T>
-ArrayXXd c4ddp(const ArrayXXd& f, const T h) {
-  //
-  // 4th order compact scheme 2nd derivative periodic
-  //
-  // f_ = f minus repeating part (f[0] = f[-1])
-  //        plus last nonrepeating inserted at index 0 (f_[0] = f[-2])
-  const size_t nx = f.rows();
-  const size_t ns = f.cols();
-
-  ArrayXXd f_ = f(seq(0, nx-1), all);
-  ArrayXXd f_pp = ArrayXXd::Zero(nx, ns);
-  ArrayXXd r    = ArrayXXd::Zero(nx-1, ns);
-
-  ArrayXXd a = (1./10) * ArrayXXd::Ones(nx-1, ns);
-  ArrayXXd b =      1. * ArrayXXd::Ones(nx-1, ns);
-  ArrayXXd c = (1./10) * ArrayXXd::Ones(nx-1, ns);
-
-  auto i = ArrayXi::LinSpaced(nx-2, 1, nx-2);
-  r(i, all)    = (6./5)*(1/std::pow(h, 2))*(f_(i+1, all) - 2*f_(i, all)    + f_(i-1, all));
-  r(0, all)    = (6./5)*(1/std::pow(h, 2))*(f_(1, all)   - 2*f_(0, all)    + f_(last, all));
-  r(last, all) = (6./5)*(1/std::pow(h, 2))*(f_(0, all)   - 2*f_(last, all) + f_(last-1, all));
-
-  const T alpha = 1./10;
-  const T beta = 1./10;
-  for (size_t s{}; s<ns; s++) {
-    f_pp(seq(0, last-1), s) = TDMA_cyclic(a.col(s), b.col(s), c.col(s), r.col(s), alpha, beta);
-  }
-  f_pp(last, all) = f_pp.row(0);
-
-  return f_pp;
-}
-
-template <typename T>
 T get_dt(ArrayXXd q, const size_t nx, const T dx) {
   const T cfl = 0.5;
   ArrayXXd c_ip12 = get_wave_speeds(q, nx);
@@ -477,3 +504,30 @@ ArrayXXd get_flux(const ArrayXXd& q) {
 
   return F;
 }
+
+// Supporting Code
+std::chrono::nanoseconds dummy_time;
+struct Stopwatch {
+  Stopwatch(std::chrono::nanoseconds& result)
+    : name{ "No_name" },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name, std::chrono::nanoseconds& result)
+    : name{ name },
+    result{ result },
+    start{ std::chrono::high_resolution_clock::now() } { }
+  Stopwatch(std::string name)
+    : name{ name },
+    result{ dummy_time },
+    start{ std::chrono::high_resolution_clock::now() } { }
+
+  ~Stopwatch() {
+    result = std::chrono::high_resolution_clock::now() - start;
+    std::cout << "-[" << name << "] Ended. Elapsed Time: " <<
+      std::setprecision(4) << result.count()/1e6 << " ms" << std::endl;
+  }
+private:
+  const std::string name;
+  std::chrono::nanoseconds& result;
+  const std::chrono::time_point<std::chrono::high_resolution_clock> start;
+};
